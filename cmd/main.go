@@ -16,18 +16,36 @@ func main() {
 	iptablesPolicy := flag.String("policy", "", "iptables policy (accept or drop)")
 	iptables := flag.Bool("iptables", false, "Add iptable rules")
 	verbose := flag.Bool("v", false, "Verbose mode")
+	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
 
 	// Print example usage if no arguments are provided
-	if len(os.Args) <= 1 {
+	if len(os.Args) <= 1 || *help {
 		fmt.Println(`You must pass an argument. Use -help for more information.
+
+Options:
+	-country	{CODE}			set country code
+	-set		{NAME}			name of ipset set
+	-check		{IP}			check if IP exists in specific country IP pool
+
+	-iptables				setup iptables rules
+	-policy		{POLICY}		works with -iptables and sets default policy
+
+	-v					verbose mode
 
 Example usage:
 
-Run as worker mode:
-	ipsetfw -country IR -iptables
-Push config to Minio (Does not check state):
-	kookctl -mode standalone -p`)
+Create a set of Iran IP pool:
+	ipsetfw -country IR -set set
+
+Create a set of Iran IP pool and block IPs from IR (Iran):
+	ipsetfw -country IR -set set -iptables -policy drop
+
+Create a set of Iran IP pool and Accpet IPs from Iran:
+	ipsetfw -country IR -set set -iptables -policy accept
+
+Check if IP exists in IR (Iran):
+	ipsetfw go run main.go -country IR -check 1.1.1.1`)
 		os.Exit(1)
 	}
 	set := ipsetfw.Set{
@@ -41,6 +59,6 @@ Push config to Minio (Does not check state):
 	if *countryCode != "" && *setName != "" {
 		ipsetfw.IPsetfw(set, *iptables, rule, *verbose)
 	} else if *countryCode != "" && *checkIP != "" {
-		ipsetfw.CheckIPExistsInPool(set, *checkIP)
+		ipsetfw.CheckIPExistsInPool(set, *checkIP, *verbose)
 	}
 }

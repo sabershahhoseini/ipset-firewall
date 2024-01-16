@@ -22,14 +22,21 @@ type Rule struct {
 	Policy string
 }
 
-func fetchIPPool(url, countryCode string) []string {
+func logger(log string, verbose bool) {
+	if verbose {
+		fmt.Println(log)
+	}
+}
+
+func fetchIPPool(url, countryCode string, verbose bool) []string {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	client := &http.Client{}
-	fmt.Printf("Trying to get url: %v\n", url)
+
+	logger("Trying to get url: "+url, verbose)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalln(err)
@@ -43,7 +50,7 @@ func fetchIPPool(url, countryCode string) []string {
 	}
 	// fmt.Println(string(b))
 	list := strings.Split(string(b), "\n")
-	fmt.Println("Finished fetching list of IPs")
+	logger("Finished fetching list of IPs", verbose)
 	return list
 
 }
@@ -71,12 +78,12 @@ func networkContainsIP(cidr string, ip string) bool {
 	return b
 }
 
-func CheckIPExistsInPool(set Set, targetIP string) {
+func CheckIPExistsInPool(set Set, targetIP string, verbose bool) {
 	var url string
 	countryCode := set.Country
 	countryCode = strings.ToLower(countryCode)
 	url = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/" + countryCode + ".cidr"
-	ipList := fetchIPPool(url, countryCode)
+	ipList := fetchIPPool(url, countryCode, verbose)
 
 	for _, ip := range ipList {
 		if !isCIDRValid(ip) {
@@ -84,11 +91,13 @@ func CheckIPExistsInPool(set Set, targetIP string) {
 		}
 		if networkContainsIP(ip, targetIP) {
 			fmt.Printf("%v exists in %v\n", targetIP, ip)
+			return
 		}
 	}
+	fmt.Printf("IP %v NOT FOUND in country %v!\n", targetIP, set.Country)
 }
 
-func addIptableRule(rule Rule, setName string) {
+func addIptableRule(rule Rule, setName string, verbose bool) {
 	ipt, err := iptables.New()
 	if err != nil {
 		log.Fatalln(err)
@@ -96,15 +105,15 @@ func addIptableRule(rule Rule, setName string) {
 
 	rulePolicy := strings.ToUpper(rule.Policy)
 
-	fmt.Println("Adding iptables rule")
+	logger("Adding iptables rule", verbose)
 	err = ipt.Insert("filter", "INPUT", 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println("Added iptables rule")
+	logger("Added iptables rule", verbose)
 }
 
-func removeIptableRule(rule Rule, setName string) {
+func removeIptableRule(rule Rule, setName string, verbose bool) {
 	ipt, err := iptables.New()
 	if err != nil {
 		log.Fatalln(err)
@@ -112,7 +121,7 @@ func removeIptableRule(rule Rule, setName string) {
 
 	// rulePolicy := strings.ToUpper(rule.Policy)
 
-	fmt.Println("Removing iptables rule")
+	logger("Removing iptables rule", verbose)
 
 	// err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src")
 	err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src", "-j", "ACCEPT")
@@ -123,7 +132,7 @@ func removeIptableRule(rule Rule, setName string) {
 		}
 		log.Fatalln(err)
 	}
-	fmt.Println("Removed iptables rule")
+	logger("Removed iptables rule", verbose)
 }
 
 func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
@@ -134,7 +143,7 @@ func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
 	countryCode = strings.ToLower(countryCode)
 	url = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/" + countryCode + ".cidr"
 
-	ipList := fetchIPPool(url, countryCode)
+	ipList := fetchIPPool(url, countryCode, verbose)
 
 	// Construct a new ipset instance
 	ipset, err := ipset.New()
@@ -143,7 +152,7 @@ func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
 	}
 
 	if iptables {
-		removeIptableRule(rule, setName)
+		removeIptableRule(rule, setName, verbose)
 		time.Sleep(500 * time.Millisecond)
 	}
 	// Create a new set
@@ -155,7 +164,7 @@ func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Println("Adding IPs to set")
+	logger("Adding IPs to set", verbose)
 	for _, ip := range ipList {
 		if !isCIDRValid(ip) {
 			continue
@@ -168,10 +177,10 @@ func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
 			log.Fatalln(err)
 		}
 	}
-	fmt.Println("Added IPs to set")
+	logger("Added IPs to set", verbose)
 
 	if iptables {
-		addIptableRule(rule, setName)
+		addIptableRule(rule, setName, verbose)
 	}
 
 	listLen := len(ipList)
