@@ -135,7 +135,7 @@ func removeIptableRule(rule Rule, setName string, verbose bool) {
 	logger("Removed iptables rule", verbose)
 }
 
-func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
+func IPsetfw(set Set, iptables bool, rule Rule, verbose bool, file string) {
 
 	var url string
 	countryCode := set.Country

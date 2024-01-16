@@ -14,6 +14,7 @@ func main() {
 	setName := flag.String("set", "", "ipset set name")
 	checkIP := flag.String("check", "", "Check IP exists in pool")
 	iptablesPolicy := flag.String("policy", "", "iptables policy (accept or drop)")
+	file := flag.String("file", "", "Get list from file instead of github")
 	iptables := flag.Bool("iptables", false, "Add iptable rules")
 	verbose := flag.Bool("v", false, "Verbose mode")
 	help := flag.Bool("help", false, "Show help")
@@ -57,7 +58,7 @@ Check if IP exists in IR (Iran):
 	}
 	// If type is minio and -p is not passed, read config file from Minio and check state
 	if *countryCode != "" && *setName != "" {
-		ipsetfw.IPsetfw(set, *iptables, rule, *verbose)
+		ipsetfw.IPsetfw(set, *iptables, rule, *verbose, *file)
 	} else if *countryCode != "" && *checkIP != "" {
 		ipsetfw.CheckIPExistsInPool(set, *checkIP, *verbose)
 	}
