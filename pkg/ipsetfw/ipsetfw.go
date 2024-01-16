@@ -4,16 +4,32 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
+	"strings"
+	"time"
+
+	"github.com/coreos/go-iptables/iptables"
+	"github.com/gmccue/go-ipset"
 )
 
-func fetchIPPool(url, countryCode string) string {
+type Set struct {
+	Country string
+	SetName string
+}
+type Rule struct {
+	Policy string
+}
+
+func fetchIPPool(url, countryCode string) []string {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	client := &http.Client{}
+	fmt.Printf("Trying to get url: %v\n", url)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalln(err)
@@ -22,32 +38,143 @@ func fetchIPPool(url, countryCode string) string {
 	defer resp.Body.Close()
 
 	b, err := io.ReadAll(resp.Body)
-	// b, err := ioutil.ReadAll(resp.Body)  Go.1.15 and earlier
+	if err != nil {
+		log.Fatalln(err)
+	}
+	// fmt.Println(string(b))
+	list := strings.Split(string(b), "\n")
+	fmt.Println("Finished fetching list of IPs")
+	return list
+
+}
+
+func isCIDRValid(ip string) bool {
+	_, _, err := net.ParseCIDR(ip)
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func networkContainsIP(cidr string, ip string) bool {
+	network, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		panic(err)
+	}
+
+	parsedIP, err := netip.ParseAddr(ip)
+	if err != nil {
+		panic(err)
+	}
+
+	b := network.Contains(parsedIP)
+	return b
+}
+
+func CheckIPExistsInPool(set Set, targetIP string) {
+	var url string
+	countryCode := set.Country
+	countryCode = strings.ToLower(countryCode)
+	url = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/" + countryCode + ".cidr"
+	ipList := fetchIPPool(url, countryCode)
+
+	for _, ip := range ipList {
+		if !isCIDRValid(ip) {
+			continue
+		}
+		if networkContainsIP(ip, targetIP) {
+			fmt.Printf("%v exists in %v\n", targetIP, ip)
+		}
+	}
+}
+
+func addIptableRule(rule Rule, setName string) {
+	ipt, err := iptables.New()
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	return string(b)
+	rulePolicy := strings.ToUpper(rule.Policy)
+
+	fmt.Println("Adding iptables rule")
+	err = ipt.Insert("filter", "INPUT", 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println("Added iptables rule")
 }
 
-func IPsetfw(countryCode string, iptables bool) {
-	var url string
-	url = "https://git.herrbischoff.com/country-ip-blocks-alternative/plain/ipv4/ir.netset"
-	ipList := fetchIPPool(url, countryCode)
-	fmt.Println(ipList)
-	// Construct a new ipset instance
-	// ipset, err := ipset.New()
-	// if err != nil {
-	// 	// Your custom error handling here.
-	// }
+func removeIptableRule(rule Rule, setName string) {
+	ipt, err := iptables.New()
+	if err != nil {
+		log.Fatalln(err)
+	}
 
-	// // Create a new set
-	// err := ipset.Create("my_set", "hash:ip")
-	// if err != nil {
-	// 	// Your custom error handling here.
-	// }
-	// err := ipset.Add("my_set", "127.0.0.1")
-	// if err != nil {
-	// 	// Your custom error handling here.
-	// }
+	// rulePolicy := strings.ToUpper(rule.Policy)
+
+	fmt.Println("Removing iptables rule")
+
+	// err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src")
+	err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src", "-j", "ACCEPT")
+	err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src", "-j", "DROP")
+	if err != nil {
+		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
+			return
+		}
+		log.Fatalln(err)
+	}
+	fmt.Println("Removed iptables rule")
+}
+
+func IPsetfw(set Set, iptables bool, rule Rule, verbose bool) {
+
+	var url string
+	countryCode := set.Country
+	setName := set.SetName
+	countryCode = strings.ToLower(countryCode)
+	url = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/" + countryCode + ".cidr"
+
+	ipList := fetchIPPool(url, countryCode)
+
+	// Construct a new ipset instance
+	ipset, err := ipset.New()
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	if iptables {
+		removeIptableRule(rule, setName)
+		time.Sleep(500 * time.Millisecond)
+	}
+	// Create a new set
+	err = ipset.Destroy(setName)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	err = ipset.Create(setName, "hash:net")
+	if err != nil {
+		log.Fatalln(err)
+	}
+	fmt.Println("Adding IPs to set")
+	for _, ip := range ipList {
+		if !isCIDRValid(ip) {
+			continue
+		}
+		if verbose {
+			fmt.Printf("Adding %v\n", ip)
+		}
+		err := ipset.Add(setName, ip)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+	fmt.Println("Added IPs to set")
+
+	if iptables {
+		addIptableRule(rule, setName)
+	}
+
+	listLen := len(ipList)
+
+	fmt.Printf("Successfully created set %v for country %v with %v number of entries!\n", setName, countryCode, listLen)
 }
