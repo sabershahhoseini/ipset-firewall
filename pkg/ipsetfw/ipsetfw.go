@@ -15,6 +15,40 @@ import (
 	"github.com/gmccue/go-ipset"
 )
 
+func removeDefaultChain(chainName string, verbose bool) {
+	ipt, err := iptables.New()
+	checkerr.Fatal(err)
+	logger.Log("Removing default chain "+chainName, verbose)
+	chainExists, err := ipt.ChainExists("filter", chainName)
+	checkerr.Fatal(err)
+	if chainExists {
+		err = ipt.DeleteChain("filter", chainName)
+		checkerr.Fatal(err)
+	}
+	logger.Log("Chain "+chainName+" does not exist. Already cleared?", verbose)
+}
+
+func removeDefaultChainIptableRule(chainName string, verbose bool, clear bool) {
+	ipt, err := iptables.New()
+	checkerr.Fatal(err)
+
+	logger.Log("Removing iptables rule to for default chain "+chainName, verbose)
+	if chainName != "INPUT" {
+		err = ipt.Delete("filter", "INPUT", "-j", chainName)
+		if err != nil {
+			if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
+				if clear {
+					logger.Log("Chain "+chainName+" does not exist. Already cleared?", verbose)
+				}
+				return
+			}
+		}
+		checkerr.Fatal(err)
+		logger.Log("Removed iptables rule", verbose)
+	}
+
+}
+
 func createDefaultChain(chainName string) {
 	ipt, err := iptables.New()
 	checkerr.Fatal(err)
@@ -30,10 +64,12 @@ func addDefaultChainIptableRule(chainName string, verbose bool) {
 	checkerr.Fatal(err)
 
 	logger.Log("Adding iptables rule to for default chain "+chainName, verbose)
-	err = ipt.InsertUnique("filter", "INPUT", 1, "-j", chainName)
-	checkerr.Fatal(err)
+	if chainName != "INPUT" {
+		err = ipt.InsertUnique("filter", "INPUT", 1, "-j", chainName)
+		checkerr.Fatal(err)
+		logger.Log("Added iptables rule", verbose)
+	}
 
-	logger.Log("Added iptables rule", verbose)
 }
 
 func addIptableRule(rule models.Rule, setName string, chainName string, verbose bool) {
@@ -49,7 +85,7 @@ func addIptableRule(rule models.Rule, setName string, chainName string, verbose 
 	logger.Log("Added iptables rule", verbose)
 }
 
-func removeIptableRule(rule models.Rule, setName string, chainName string, verbose bool) {
+func removeIptableRule(rule models.Rule, setName string, chainName string, verbose bool, clear bool) {
 	ipt, err := iptables.New()
 	checkerr.Fatal(err)
 
@@ -61,6 +97,9 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, verbo
 		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
 			return
 		} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
+			if clear {
+				logger.Log("Rule not found. Already cleared?", verbose)
+			}
 			return
 		}
 		checkerr.Fatal(err)
@@ -90,8 +129,8 @@ func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, d
 	// We need to clear everything. And we can't remove ipset set if we don't
 	// Release it from iptables.
 	if iptables {
-		removeIptableRule(rule, setName, chainName, verbose)
-		time.Sleep(500 * time.Millisecond)
+		removeIptableRule(rule, setName, chainName, verbose, false)
+		time.Sleep(100 * time.Millisecond)
 	}
 	// Destroy set if it exists
 	err = ipset.Destroy(setName)
@@ -169,5 +208,52 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 	}
 	if defaultChain != "" {
 		addDefaultChainIptableRule(defaultChain, verbose)
+	}
+}
+
+func LoopConfigFileClear(path string, iptables bool, verbose bool) {
+	configString := file.ReadConfigFile(path)
+	inventory := file.DecodeConfig(configString)
+	var chainName string
+	var defaultChain string
+	var rule models.Rule
+	if inventory.DefaultChain == "" {
+		defaultChain = "INPUT"
+	} else {
+		defaultChain = inventory.DefaultChain
+	}
+	for _, r := range inventory.IPSetRules {
+		setName := r.SetName
+		rule = models.Rule{
+			Policy: r.IPtables.Policy,
+			Insert: r.IPtables.Insert,
+		}
+		if r.IPtables.Policy != "" {
+			iptables = true
+		}
+		chainName = r.IPtables.Chain
+		ipset, err := ipset.New()
+
+		if chainName == "" {
+			chainName = defaultChain
+		}
+		if defaultChain != "" {
+			createDefaultChain(defaultChain)
+		}
+		if iptables {
+			removeIptableRule(rule, setName, chainName, verbose, true)
+			time.Sleep(100 * time.Millisecond)
+		}
+		// Destroy set if it exists
+		err = ipset.Destroy(setName)
+		if err != nil {
+			if !strings.Contains(err.Error(), "The set with the given name does not exist") {
+				checkerr.Fatal(err)
+			}
+		}
+	}
+	if defaultChain != "" {
+		removeDefaultChainIptableRule(defaultChain, verbose, true)
+		removeDefaultChain(defaultChain, verbose)
 	}
 }

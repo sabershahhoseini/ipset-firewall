@@ -5,28 +5,22 @@ defaultChain: IPSET_FW
 # A list of rules containing country name to block and set name for ipset.
 # If iptables variable is defined, iptable rules will be created too.
 rules:
-  - country: DE
-    set: DE-block
+  - country: ir
+    set: ir-block
     iptables:
-      policy: accept
+      policy: drop
       insert: 1
+      chain: INPUT
 
   # file is a list of files of network pools
   - file:
-    #    - /tmp/US-list.txt
-    #    - /tmp/DE-list.txt
-    - /tmp/list.txt
-    # When file is defined, country only is only used for logs
-    country: us-de
-    set: us-de-block
-    iptables:
-      policy: accept
-      insert: 2
-      chain: INPUT
+    - /tmp/US-list.txt
+    - /tmp/DE-list.txt
 
-  - country: UA
-    set: ua-block
+    # When file is defined, country only is only used for logs
+    country: us
+    set: us-block
     iptables:
-      policy: accept
-      insert: 3
-      chain: INPUT
+      policy: drop
+      insert: 2
+      # If you don't define any chain, default chain will be used

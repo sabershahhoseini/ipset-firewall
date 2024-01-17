@@ -22,6 +22,7 @@ func main() {
 	chain := flag.String("chain", "INPUT", "iptables chain to add rules to")
 	verbose := flag.Bool("v", false, "Verbose mode")
 	export := flag.Bool("export", false, "Export to file")
+	clear := flag.Bool("clear", false, "Clear everything")
 	config := flag.String("config", "", "Use yaml config file")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
@@ -45,12 +46,17 @@ Options:
 	-chain		{CHAIN}			iptables chain to add rules to. defaults to INPUT
 	-policy		{POLICY}		works with -iptables and sets default policy
 
+	-clear					clear everything
+
 	-v					verbose mode
 
 Example usage:
 
 Read rules from config file:
 	ipsetfw -config ipsetfw.yml
+
+Clear rules defined in config file:
+	ipsetfw -config ipsetfw.yml -clear
 
 Create a set of Iran IP pool:
 	ipsetfw -country ir -set set
@@ -85,8 +91,10 @@ Check if IP exists in IR (Iran):
 	if *export {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, "")
 		file.ExportToFile(*filePath, ipList, *verbose)
-	} else if *config != "" {
+	} else if *config != "" && !*clear {
 		ipsetfw.LoopConfigFile(*config, *iptables, *verbose)
+	} else if *clear {
+		ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose)
 	} else if *countryCode != "" && *setName != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
 		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, *verbose)
