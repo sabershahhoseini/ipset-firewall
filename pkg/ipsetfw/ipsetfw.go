@@ -2,6 +2,9 @@ package ipsetfw
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"os/user"
 	"strings"
 	"time"
 
@@ -14,6 +17,17 @@ import (
 
 	"github.com/gmccue/go-ipset"
 )
+
+func ExitIfNotRoot() {
+	currentUser, err := user.Current()
+	if err != nil {
+		log.Fatalf("Unable to get current user: %s", err)
+	}
+	if currentUser.Username != "root" {
+		fmt.Println("You must be root!")
+		os.Exit(1)
+	}
+}
 
 func removeDefaultChain(chainName string, verbose bool) {
 	ipt, err := iptables.New()
@@ -108,7 +122,7 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, verbo
 }
 
 func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, defaultChain string, rule models.Rule, verbose bool) {
-
+	ExitIfNotRoot()
 	var countryCode string
 	var setName string
 
@@ -167,6 +181,7 @@ func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, d
 }
 
 func LoopConfigFile(path string, iptables bool, verbose bool) {
+	ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
 	var ipListConcatenated []string
@@ -212,6 +227,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 }
 
 func LoopConfigFileClear(path string, iptables bool, verbose bool) {
+	ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
 	var chainName string

@@ -12,6 +12,7 @@ import (
 )
 
 func main() {
+
 	// Required flags
 	countryCode := flag.String("country", "", "Specify country code (example: IR)")
 	setName := flag.String("set", "", "ipset set name")
