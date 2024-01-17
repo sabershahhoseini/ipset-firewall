@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sabershahhoseini/ipset-firewall/models"
 	"github.com/sabershahhoseini/ipset-firewall/pkg/ipsetfw"
+	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
 )
 
@@ -15,9 +17,12 @@ func main() {
 	setName := flag.String("set", "", "ipset set name")
 	checkIP := flag.String("check", "", "Check IP exists in pool")
 	iptablesPolicy := flag.String("policy", "", "iptables policy (accept or drop)")
-	file := flag.String("file", "", "Get list from file instead of github")
+	filePath := flag.String("file", "", "Get list from file instead of github")
 	iptables := flag.Bool("iptables", false, "Add iptable rules")
+	chain := flag.String("chain", "INPUT", "iptables chain to add rules to")
 	verbose := flag.Bool("v", false, "Verbose mode")
+	export := flag.Bool("export", false, "Export to file")
+	config := flag.String("config", "", "Use yaml config file")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
 
@@ -28,21 +33,30 @@ func main() {
 Options:
 	-help					show this menu
 
-	-country	{CODE}			set country code
+	-config		{PATH}			Read config from yaml file
+	-country	{CODE}			set country code. is not case sensitive.
 	-set		{NAME}			name of ipset set
 	-check		{IP}			check if IP exists in specific country IP pool
 
 	-file		{PATH}			file path to read networks from (by default, it will be fetched from github)
+	-export					export to file. works with -file and -country
 
 	-iptables				setup iptables rules
+	-chain		{CHAIN}			iptables chain to add rules to. defaults to INPUT
 	-policy		{POLICY}		works with -iptables and sets default policy
 
 	-v					verbose mode
 
 Example usage:
 
+Read rules from config file:
+	ipsetfw -config ipsetfw.yml
+
 Create a set of Iran IP pool:
-	ipsetfw -country IR -set set
+	ipsetfw -country ir -set set
+
+Create a set of Iran IP pool:
+	ipsetfw -country ir -set set
 
 Create a set of Iran IP pool and block IPs from Iran by adding iptables rule:
 	ipsetfw -country IR -set set -iptables -policy drop
@@ -50,26 +64,34 @@ Create a set of Iran IP pool and block IPs from Iran by adding iptables rule:
 Create a set of Iran IP pool and accpet IPs from Iran by adding iptable rules with verbose mode:
 	ipsetfw -country IR -set set -iptables -policy accept -v
 
+Fetch github and export Iran IP pool:
+	ipsetfw -country ir -export -file /tmp/list-export.txt -v
+
 Create a set of Iran IP pool and accpet IPs from Iran from file:
-	ipsetfw -country IR -set set -iptables -policy accept -file /opt/ips.txt
+	ipsetfw -country IR -set set -iptables -policy accept -file /tmp/list-export.txt
 
 Check if IP exists in IR (Iran):
-	ipsetfw -country IR -check 1.1.1.1`)
+	ipsetfw -country ir -check 1.1.1.1`)
 		os.Exit(1)
 	}
-	set := ipsetfw.Set{
+	set := models.Set{
 		Country: *countryCode,
 		SetName: *setName,
 	}
-	rule := ipsetfw.Rule{
+	rule := models.Rule{
 		Policy: *iptablesPolicy,
 	}
 	// If type is minio and -p is not passed, read config file from Minio and check state
-	if *countryCode != "" && *setName != "" {
-		ipList := netutils.FetchIPPool(*countryCode, *verbose, *file)
-		ipsetfw.IPsetfw(ipList, set, *iptables, rule, *verbose)
+	if *export {
+		ipList := netutils.FetchIPPool(*countryCode, *verbose, "")
+		file.ExportToFile(*filePath, ipList, *verbose)
+	} else if *config != "" {
+		ipsetfw.LoopConfigFile(*config, *iptables, *verbose)
+	} else if *countryCode != "" && *setName != "" {
+		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
+		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, *verbose)
 	} else if *countryCode != "" && *checkIP != "" {
-		ipList := netutils.FetchIPPool(*countryCode, *verbose, *file)
+		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
 		netutils.CheckIPExistsInPool(ipList, *checkIP, *verbose)
 	}
 }

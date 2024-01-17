@@ -1,0 +1,32 @@
+# Default chain will be created if it's defined. Each rule
+# with iptables.chain = nil will inherite chain from default chain.
+defaultChain: IPSET_FW
+
+# A list of rules containing country name to block and set name for ipset.
+# If iptables variable is defined, iptable rules will be created too.
+rules:
+  - country: DE
+    set: DE-block
+    iptables:
+      policy: accept
+      insert: 1
+
+  # file is a list of files of network pools
+  - file:
+    #    - /tmp/US-list.txt
+    #    - /tmp/DE-list.txt
+    - /tmp/list.txt
+    # When file is defined, country only is only used for logs
+    country: us-de
+    set: us-de-block
+    iptables:
+      policy: accept
+      insert: 2
+      chain: INPUT
+
+  - country: UA
+    set: ua-block
+    iptables:
+      policy: accept
+      insert: 3
+      chain: INPUT

@@ -7,33 +7,56 @@ import (
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
+	"github.com/sabershahhoseini/ipset-firewall/models"
+	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
 
 	"github.com/gmccue/go-ipset"
 )
 
-func addIptableRule(rule Rule, setName string, verbose bool) {
+func createDefaultChain(chainName string) {
+	ipt, err := iptables.New()
+	checkerr.Fatal(err)
+	chainExists, err := ipt.ChainExists("filter", chainName)
+	checkerr.Fatal(err)
+	if !chainExists {
+		err = ipt.NewChain("filter", chainName)
+		checkerr.Fatal(err)
+	}
+}
+func addDefaultChainIptableRule(chainName string, verbose bool) {
 	ipt, err := iptables.New()
 	checkerr.Fatal(err)
 
-	rulePolicy := strings.ToUpper(rule.Policy)
-
-	logger.Log("Adding iptables rule", verbose)
-	err = ipt.Insert("filter", "INPUT", 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
+	logger.Log("Adding iptables rule to for default chain "+chainName, verbose)
+	err = ipt.InsertUnique("filter", "INPUT", 1, "-j", chainName)
 	checkerr.Fatal(err)
 
 	logger.Log("Added iptables rule", verbose)
 }
 
-func removeIptableRule(rule Rule, setName string, verbose bool) {
+func addIptableRule(rule models.Rule, setName string, chainName string, verbose bool) {
 	ipt, err := iptables.New()
 	checkerr.Fatal(err)
 
-	logger.Log("Removing iptables rule", verbose)
+	rulePolicy := strings.ToUpper(rule.Policy)
 
-	err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src", "-j", "ACCEPT")
-	err = ipt.Delete("filter", "INPUT", "-m", "set", "--match-set", setName, "src", "-j", "DROP")
+	logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, verbose)
+	err = ipt.InsertUnique("filter", chainName, 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
+	checkerr.Fatal(err)
+
+	logger.Log("Added iptables rule", verbose)
+}
+
+func removeIptableRule(rule models.Rule, setName string, chainName string, verbose bool) {
+	ipt, err := iptables.New()
+	checkerr.Fatal(err)
+
+	logger.Log("Removing iptables rule to chain "+chainName+" and set "+setName, verbose)
+
+	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "ACCEPT")
+	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "DROP")
 	if err != nil {
 		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
 			return
@@ -45,7 +68,7 @@ func removeIptableRule(rule Rule, setName string, verbose bool) {
 	logger.Log("Removed iptables rule", verbose)
 }
 
-func IPsetfw(ipList []string, set Set, iptables bool, rule Rule, verbose bool) {
+func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, defaultChain string, rule models.Rule, verbose bool) {
 
 	var countryCode string
 	var setName string
@@ -56,11 +79,18 @@ func IPsetfw(ipList []string, set Set, iptables bool, rule Rule, verbose bool) {
 	// Construct a new ipset instance
 	ipset, err := ipset.New()
 
+	if chainName == "" {
+		chainName = defaultChain
+	}
+	if defaultChain != "" {
+		createDefaultChain(defaultChain)
+	}
+
 	// If iptables argument is passed, the rule. This step is essential because
 	// We need to clear everything. And we can't remove ipset set if we don't
 	// Release it from iptables.
 	if iptables {
-		removeIptableRule(rule, setName, verbose)
+		removeIptableRule(rule, setName, chainName, verbose)
 		time.Sleep(500 * time.Millisecond)
 	}
 	// Destroy set if it exists
@@ -87,13 +117,57 @@ func IPsetfw(ipList []string, set Set, iptables bool, rule Rule, verbose bool) {
 		checkerr.Fatal(err)
 
 	}
+
 	logger.Log("Added IPs to set", verbose)
 
 	if iptables {
-		addIptableRule(rule, setName, verbose)
+		addIptableRule(rule, setName, chainName, verbose)
 	}
 
-	listLen := len(ipList)
+	fmt.Printf("Successfully created set %v for country %v with %v number of entries!\n", setName, countryCode, len(ipList))
+}
 
-	fmt.Printf("Successfully created set %v for country %v with %v number of entries!\n", setName, countryCode, listLen)
+func LoopConfigFile(path string, iptables bool, verbose bool) {
+	configString := file.ReadConfigFile(path)
+	inventory := file.DecodeConfig(configString)
+	var ipListConcatenated []string
+	var ipList []string
+	var chainName string
+	var defaultChain string
+	var set models.Set
+	var rule models.Rule
+	if inventory.DefaultChain == "" {
+		defaultChain = "INPUT"
+	} else {
+		defaultChain = inventory.DefaultChain
+	}
+	for _, r := range inventory.IPSetRules {
+		set = models.Set{
+			Country: r.Country,
+			SetName: r.SetName,
+		}
+		rule = models.Rule{
+			Policy: r.IPtables.Policy,
+			Insert: r.IPtables.Insert,
+		}
+		if r.IPtables.Policy != "" {
+			iptables = true
+		}
+		chainName = r.IPtables.Chain
+
+		if len(r.Path) != 0 {
+			for _, path := range r.Path {
+				ipList = netutils.FetchIPPool(*&set.Country, verbose, path)
+				// ipsetfw.IPsetfw(ipList, set, *iptables, rule, *verbose)
+				ipListConcatenated = append(ipListConcatenated, ipList...)
+			}
+			IPsetfw(ipListConcatenated, set, iptables, chainName, defaultChain, rule, verbose)
+		} else {
+			ipList := netutils.FetchIPPool(*&set.Country, verbose, "")
+			IPsetfw(ipList, set, iptables, chainName, defaultChain, rule, verbose)
+		}
+	}
+	if defaultChain != "" {
+		addDefaultChainIptableRule(defaultChain, verbose)
+	}
 }
