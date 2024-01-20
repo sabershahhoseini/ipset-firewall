@@ -82,7 +82,7 @@ func ExportToFile(filePath string, ipList []string, verbose bool) {
 		_, _ = datawriter.WriteString(data + "\n")
 	}
 	logger.Log("Successfully created file with "+fmt.Sprint((len(ipList)))+" number of entries", verbose)
-	fmt.Println("File exported at " + filePath)
+	logger.Log("File exported at "+filePath, verbose)
 
 	datawriter.Flush()
 	file.Close()
