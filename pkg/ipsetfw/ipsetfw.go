@@ -153,10 +153,6 @@ func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, d
 	// If iptables argument is passed, the rule. This step is essential because
 	// We need to clear everything. And we can't remove ipset set if we don't
 	// Release it from iptables.
-	if iptables {
-		removeIptableRule(rule, setName, chainName, verbose, false)
-		time.Sleep(100 * time.Millisecond)
-	}
 
 	// Create a temporary set with new IP pool that we'll swap it with old set later
 	err = ipset.Create(tmpSetName, "hash:net")
