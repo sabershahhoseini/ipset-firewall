@@ -224,8 +224,10 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			IPsetfw(ipList, set, iptables, chainName, defaultChain, rule, verbose)
 		}
 	}
-	// if defaultChain != "" {
-	// 	addDefaultChainIptableRule(defaultChain, verbose)
+	// if inventory.BlockTor {
+	// 	ipList := netutils.FetchIPPool("", verbose, "")
+	// 	ipList = netutils.MergeIPsToCIDRs(ipList)
+	// 	IPsetfw(ipList, models.Set{SetName: "block-tor"}, iptables, "", defaultChain, rule, verbose)
 	// }
 }
 

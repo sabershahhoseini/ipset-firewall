@@ -12,6 +12,12 @@ rules:
       policy: accept
       insert: 1
 
+  - country: tor
+    set: tor-block
+    iptables:
+      policy: drop
+      insert: 2
+
   # file is a list of files of network pools
   - file:
     - /tmp/US-list.txt
@@ -22,5 +28,5 @@ rules:
     set: us-block
     iptables:
       policy: drop
-      insert: 2
+      insert: 3
       # If you don't define any chain, default chain will be used

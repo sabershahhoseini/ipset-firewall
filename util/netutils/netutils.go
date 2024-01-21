@@ -9,9 +9,14 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/EvilSuperstars/go-cidrman"
+	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 )
+
+const GeoURL string = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/COUNTRY_CODE.cidr"
+const TorURL string = "https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst"
 
 func IsCIDRValid(ip string) bool {
 	_, _, err := net.ParseCIDR(ip)
@@ -51,7 +56,17 @@ func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 }
 
 func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
+
 	var ipList []string
+	var url string
+	countryCode = strings.ToLower(countryCode)
+
+	if countryCode == "tor" {
+		url = TorURL
+	} else {
+		tmpUrl := GeoURL
+		url = strings.Replace(tmpUrl, "COUNTRY_CODE", countryCode, 1)
+	}
 
 	// If file argument is passed, read file and create set
 	if filePath != "" {
@@ -60,8 +75,6 @@ func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
 		return ipList
 	}
 	// Else, go fetch from github
-	countryCode = strings.ToLower(countryCode)
-	var url string = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/" + countryCode + ".cidr"
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Fatalln(err)
@@ -84,4 +97,28 @@ func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
 	list := strings.Split(string(b), "\n")
 	logger.Log("Finished fetching list of IPs", verbose)
 	return list
+}
+
+func MergeIPsToCIDRs(ipList []string) []string {
+
+	var ipNet *net.IPNet
+	var ipNetList []*net.IPNet
+	var ipListMerged []string
+
+	for _, ip := range ipList {
+		if ip == "" || strings.Contains(ip, ":") {
+			continue
+		}
+		if !strings.Contains(ip, "/") {
+			_, ipn, err := net.ParseCIDR(ip + "/32")
+			checkerr.Fatal(err)
+			ipNet = ipn
+		}
+		ipNetList = append(ipNetList, ipNet)
+	}
+	merged, _ := cidrman.MergeIPNets(ipNetList)
+	for _, ip := range merged {
+		ipListMerged = append(ipListMerged, ip.String())
+	}
+	return ipListMerged
 }

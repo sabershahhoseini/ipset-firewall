@@ -88,7 +88,6 @@ Check if IP exists in IR (Iran):
 	rule := models.Rule{
 		Policy: *iptablesPolicy,
 	}
-	// If type is minio and -p is not passed, read config file from Minio and check state
 	if *export {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, "")
 		file.ExportToFile(*filePath, ipList, *verbose)

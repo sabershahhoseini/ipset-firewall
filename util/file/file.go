@@ -30,6 +30,7 @@ type Rule struct {
 type Inventory struct {
 	IPSetRules   []Rule `yaml:"rules"`
 	DefaultChain string `yaml:"defaultChain"`
+	BlockTor     bool   `yaml:"blockTor"`
 }
 
 func ReadConfigFile(path string) string {
