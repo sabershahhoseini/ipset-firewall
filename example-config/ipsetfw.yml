@@ -1,13 +1,20 @@
 # Default chain will be created if it's defined. Each rule
 # with iptables.chain = nil will inherite chain from default chain.
 defaultChain: IPSET_FW
-
+mattermost:
+  url: https://chat.jibit.cloud
+  token: 5yeq1di75pygibyiob9aqkumao
 
 # A list of rules containing country name to block and set name for ipset.
 # If iptables variable is defined, iptable rules will be created too.
 rules:
   - country: ir
+    file:
+      - "/tmp/ip-list.txt"
     set: ir-block
+    extraIPs:
+      - "192.168.169.0/24"
+      - "172.16.0.0/16"
     iptables:
       policy: accept
       insert: 1
@@ -27,6 +34,6 @@ rules:
     country: us
     set: us-block
     iptables:
-      policy: drop
+      policy: accept
       insert: 3
       # If you don't define any chain, default chain will be used

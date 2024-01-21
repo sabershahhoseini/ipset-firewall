@@ -97,7 +97,7 @@ Check if IP exists in IR (Iran):
 		ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose)
 	} else if *countryCode != "" && *setName != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
-		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, *verbose)
+		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, file.Mattermost{}, *verbose)
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
 		netutils.CheckIPExistsInPool(ipList, *checkIP, *verbose)
