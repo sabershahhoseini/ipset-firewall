@@ -11,7 +11,7 @@ Just take a look at below picture. You can clearly see that using only iptables 
 
 ## How it works
 
-The purpose of ipsetfw is for automation. You just give it a yaml file, setup a cronjob and go watch a movie or something.
+The purpose of ipsetfw is for automation. You just give it a yaml file, setup a cronjob and go watch a movie or something. It will also notify you in mattermost (new services will be supported).
 
 It works like this:
 
@@ -19,17 +19,17 @@ Takes a list of IPs, either via fetching from github with country code you provi
 
 After that, it will create a ipset `set`, and if you choose, it will also add the required iptable rule for it.
 
-Next time you run the same command, it will clear everything and start again from scratch. So, it will:
+Next time you run the same command, it will fetch new pool and swap with old pool with no downtime. So, it will:
 
 * Take an IP list
-* Create `set`and add IPs to it
+* Create `set` and add IPs to it
 * Setup iptable rules (optional)
 * Repeat
 
 ## Usage
 
-There are two ways of using ipsetfw, either you pass arguments to cli which is a bit limited,
-or give it a yaml file for more option.
+There are two ways of using ipsetfw, either you pass arguments to CLI which is a bit limited,
+or give it a yaml file for more options.
 
 ### CLI
 You can use `ipsetfw -help` to see options and example of usage.
@@ -51,7 +51,7 @@ ipsetfw -country IR -set set -iptables -policy accept -file /tmp/list-export.txt
 
 ### Config file
 
-You can use a yaml config file with more options. Here's an example:
+You can use a yaml config file with more options. See [example-config](example-config/ipsetfw.yml) for more options. Here's an example:
 
 ```
 defaultChain: IPSET_FW
