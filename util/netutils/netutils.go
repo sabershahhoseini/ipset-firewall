@@ -18,12 +18,16 @@ import (
 const GeoURL string = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/COUNTRY_CODE.cidr"
 const TorURL string = "https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst"
 
-func IsCIDRValid(ip string) bool {
+func IsCIDRValid(ip string) (string, bool) {
 	_, _, err := net.ParseCIDR(ip)
 	if err != nil {
-		return false
+		tmpIP := net.ParseIP(ip)
+		if tmpIP == nil {
+			return "", false
+		}
+		return ip + "/32", true
 	}
-	return true
+	return ip, true
 }
 
 func NetworkContainsIP(cidr string, ip string) bool {
@@ -43,7 +47,8 @@ func NetworkContainsIP(cidr string, ip string) bool {
 
 func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 	for _, ip := range ipList {
-		if !IsCIDRValid(ip) {
+		_, isValid := IsCIDRValid(ip)
+		if !isValid {
 			continue
 		}
 		if NetworkContainsIP(ip, targetIP) {
