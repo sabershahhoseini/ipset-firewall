@@ -2,8 +2,8 @@
 # with iptables.chain = nil will inherite chain from default chain.
 defaultChain: IPSET_FW
 mattermost:
-  url: https://chat.jibit.cloud
-  token: 5yeq1di75pygibyiob9aqkumao
+  url: "MATTERMOST_URL"
+  token: "WEBHOOK_TOKEN"
 
 # A list of rules containing country name to block and set name for ipset.
 # If iptables variable is defined, iptable rules will be created too.
