@@ -88,7 +88,6 @@ Check if IP exists in IR (Iran):
 	rule := models.Rule{
 		Policy: *iptablesPolicy,
 	}
-	// If type is minio and -p is not passed, read config file from Minio and check state
 	if *export {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, "")
 		file.ExportToFile(*filePath, ipList, *verbose)
@@ -98,7 +97,7 @@ Check if IP exists in IR (Iran):
 		ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose)
 	} else if *countryCode != "" && *setName != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
-		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, *verbose)
+		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, file.Mattermost{}, *verbose)
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath)
 		netutils.CheckIPExistsInPool(ipList, *checkIP, *verbose)

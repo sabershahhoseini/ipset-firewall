@@ -2,9 +2,8 @@ package ipsetfw
 
 import (
 	"fmt"
-	"log"
 	"os"
-	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,37 +13,37 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
+	"github.com/sabershahhoseini/ipset-firewall/util/notif"
+	"github.com/sabershahhoseini/ipset-firewall/util/usermgmt"
 
 	"github.com/gmccue/go-ipset"
 )
 
-func ExitIfNotRoot() {
-	currentUser, err := user.Current()
-	if err != nil {
-		log.Fatalf("Unable to get current user: %s", err)
-	}
-	if currentUser.Username != "root" {
-		fmt.Println("You must be root!")
-		os.Exit(1)
-	}
-}
-
-func removeDefaultChain(chainName string, verbose bool) {
+func removeDefaultChain(chainName string, verbose bool) error {
 	ipt, err := iptables.New()
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 	logger.Log("Removing default chain "+chainName, verbose)
 	chainExists, err := ipt.ChainExists("filter", chainName)
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 	if chainExists {
 		err = ipt.DeleteChain("filter", chainName)
-		checkerr.Fatal(err)
+		if err != nil {
+			return err
+		}
 	}
 	logger.Log("Chain "+chainName+" does not exist. Already cleared?", verbose)
+	return nil
 }
 
-func removeDefaultChainIptableRule(chainName string, verbose bool, clear bool) {
+func removeDefaultChainIptableRule(chainName string, verbose bool, clear bool) error {
 	ipt, err := iptables.New()
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 
 	logger.Log("Removing iptables rule to for default chain "+chainName, verbose)
 	if chainName != "INPUT" {
@@ -54,50 +53,71 @@ func removeDefaultChainIptableRule(chainName string, verbose bool, clear bool) {
 				if clear {
 					logger.Log("Chain "+chainName+" does not exist. Already cleared?", verbose)
 				}
-				return
+				return nil
 			}
 		}
-		checkerr.Fatal(err)
+		if err != nil {
+			return err
+		}
 		logger.Log("Removed iptables rule", verbose)
 	}
-
+	return nil
 }
 
-func createDefaultChain(chainName string) {
+func createDefaultChain(chainName string) error {
 	ipt, err := iptables.New()
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 	chainExists, err := ipt.ChainExists("filter", chainName)
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 	if !chainExists {
 		err = ipt.NewChain("filter", chainName)
-		checkerr.Fatal(err)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
-func addDefaultChainIptableRule(chainName string, verbose bool) {
+func addDefaultChainIptableRule(chainName string, verbose bool) error {
 	ipt, err := iptables.New()
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 
 	logger.Log("Adding iptables rule to for default chain "+chainName, verbose)
 	if chainName != "INPUT" {
 		err = ipt.InsertUnique("filter", "INPUT", 1, "-j", chainName)
-		checkerr.Fatal(err)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func addIptableRule(rule models.Rule, setName string, chainName string, verbose bool) {
+func addIptableRule(rule models.Rule, setName string, chainName string, verbose bool) error {
 	ipt, err := iptables.New()
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 
 	rulePolicy := strings.ToUpper(rule.Policy)
 
 	logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, verbose)
 	err = ipt.InsertUnique("filter", chainName, 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func removeIptableRule(rule models.Rule, setName string, chainName string, verbose bool, clear bool) {
+func removeIptableRule(rule models.Rule, setName string, chainName string, verbose bool, clear bool) error {
 	ipt, err := iptables.New()
-	checkerr.Fatal(err)
+	if err != nil {
+		return err
+	}
 
 	logger.Log("Removing iptables rule to chain "+chainName+" and set "+setName, verbose)
 
@@ -105,23 +125,28 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, verbo
 	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "DROP")
 	if err != nil {
 		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
-			return
+			return nil
 		} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
 			if clear {
 				logger.Log("Rule not found. Already cleared?", verbose)
 			}
-			return
+			return nil
 		}
-		checkerr.Fatal(err)
+		if err != nil {
+			return err
+		}
 	}
 	logger.Log("Removed iptables rule", verbose)
+	return nil
 }
 
 func convertIPListToRestoreFile(ipList []string, prefixString string, verbose bool) []string {
 	for i, ip := range ipList {
-		if !netutils.IsCIDRValid(ip) {
+		tmpIP, isValid := netutils.IsCIDRValid(ip)
+		if !isValid {
 			continue
 		}
+		ip = tmpIP
 		if verbose {
 			fmt.Printf("Adding %v\n", ip)
 		}
@@ -130,33 +155,63 @@ func convertIPListToRestoreFile(ipList []string, prefixString string, verbose bo
 	return ipList
 }
 
-func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, defaultChain string, rule models.Rule, verbose bool) {
-	ExitIfNotRoot()
+func includeExtraIPs(ipList []string, extraIPs []string) []string {
+	for _, ip := range extraIPs {
+		ipList = append(ipList, ip)
+	}
+	return ipList
+}
+
+func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, defaultChain string, rule models.Rule, mattermost file.Mattermost, verbose bool) error {
+	usermgmt.ExitIfNotRoot()
 	var countryCode string
 	var setName string
+	var notifMsg string
+	var notifyMattermost bool = false
 
 	countryCode = set.Country
 	setName = set.SetName
 	tmpSetName := setName + "-tmp"
 	tmpSetFile := "/tmp/" + tmpSetName + ".txt"
 
+	hostname, err := os.Hostname()
+	checkerr.Fatal(err)
+	currentTime := time.Now()
+	timeStampFormatted := currentTime.Format("2006-01-02 15:04:05")
+
+	if mattermost.Token != "" && mattermost.URL != "" {
+		notifyMattermost = true
+	}
+
+	var notifMsgInfo string = timeStampFormatted + " HOST: " + hostname + " --- "
+
 	// Construct a new ipset instance
 	ipset, err := ipset.New()
+	checkerr.Fatal(err)
 
 	if chainName == "" {
 		chainName = defaultChain
 	}
 	if defaultChain != "" {
-		createDefaultChain(defaultChain)
+		err := createDefaultChain(defaultChain)
+		if err != nil {
+			notifMsg = notifMsgInfo + "ERROR: Could not create chain " + chainName
+			if notifyMattermost {
+				notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+			}
+			checkerr.Fatal(err)
+		}
 	}
-
-	// If iptables argument is passed, the rule. This step is essential because
-	// We need to clear everything. And we can't remove ipset set if we don't
-	// Release it from iptables.
 
 	// Create a temporary set with new IP pool that we'll swap it with old set later
 	err = ipset.Create(tmpSetName, "hash:net")
-	checkerr.Fatal(err)
+	if err != nil {
+		notifMsg = notifMsgInfo + "ERROR: Could not create temporary set " + tmpSetName
+		if notifyMattermost {
+			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+		}
+		checkerr.Fatal(err)
+	}
 
 	// Convert IP pool to a file acceptable by ipset
 	ipList = convertIPListToRestoreFile(ipList, "add "+tmpSetName, verbose)
@@ -168,23 +223,54 @@ func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, d
 	err = ipset.Create(setName, "hash:net")
 	if err != nil {
 		if !strings.Contains(err.Error(), "Set cannot be created: set with the same name already exists") {
+			notifMsg = notifMsgInfo + "ERROR: Could not create set " + setName
+			if notifyMattermost {
+				notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+			}
 			checkerr.Fatal(err)
 		}
 	}
 
 	err = ipset.Swap(tmpSetName, setName)
-	checkerr.Fatal(err)
+	if err != nil {
+		notifMsg = notifMsgInfo + "ERROR: Could not swap set " + tmpSetName + " with set " + setName
+		if notifyMattermost {
+			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+		}
+		checkerr.Fatal(err)
+	}
 	err = ipset.Destroy(tmpSetName)
-	checkerr.Fatal(err)
+	if err != nil {
+		notifMsg = notifMsgInfo + "ERROR: Could not destroy temporary set " + tmpSetName
+		if notifyMattermost {
+			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+		}
+		checkerr.Fatal(err)
+	}
 	if iptables {
-		addIptableRule(rule, setName, chainName, verbose)
+		err := addIptableRule(rule, setName, chainName, verbose)
+		if err != nil {
+			notifMsg = notifMsgInfo + "ERROR: Could not add rule for set: " + setName + " - chain: " + chainName
+			if notifyMattermost {
+				notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+			}
+			checkerr.Fatal(err)
+		}
 	}
 
-	fmt.Printf("Successfully created set %v for country %v with %v number of entries!\n", setName, countryCode, len(ipList))
+	currentTime = time.Now()
+	timeStampFormatted = currentTime.Format("2006-01-02 15:04:05")
+
+	notifMsg = notifMsgInfo + "Successfully created set " + setName + " for country " +
+		countryCode + " with " + strconv.Itoa(len(ipList)) + " number of entries!"
+
+	fmt.Printf(notifMsg + "\n")
+	notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+	return nil
 }
 
 func LoopConfigFile(path string, iptables bool, verbose bool) {
-	ExitIfNotRoot()
+	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
 	var ipListConcatenated []string
@@ -193,6 +279,11 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 	var defaultChain string
 	var set models.Set
 	var rule models.Rule
+	var mattermost file.Mattermost
+	if inventory.Mattermost.Token != "" && inventory.Mattermost.URL != "" {
+		mattermost = inventory.Mattermost
+	}
+
 	if inventory.DefaultChain == "" {
 		defaultChain = "INPUT"
 	} else {
@@ -211,26 +302,23 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			iptables = true
 		}
 		chainName = r.IPtables.Chain
-
 		if len(r.Path) != 0 {
 			for _, path := range r.Path {
 				ipList = netutils.FetchIPPool(*&set.Country, verbose, path)
-				// ipsetfw.IPsetfw(ipList, set, *iptables, rule, *verbose)
+				ipList = includeExtraIPs(ipList, r.ExtraIPs)
 				ipListConcatenated = append(ipListConcatenated, ipList...)
 			}
-			IPsetfw(ipListConcatenated, set, iptables, chainName, defaultChain, rule, verbose)
+			IPsetfw(ipListConcatenated, set, iptables, chainName, defaultChain, rule, mattermost, verbose)
 		} else {
 			ipList := netutils.FetchIPPool(*&set.Country, verbose, "")
-			IPsetfw(ipList, set, iptables, chainName, defaultChain, rule, verbose)
+			ipList = includeExtraIPs(ipList, r.ExtraIPs)
+			IPsetfw(ipList, set, iptables, chainName, defaultChain, rule, mattermost, verbose)
 		}
 	}
-	// if defaultChain != "" {
-	// 	addDefaultChainIptableRule(defaultChain, verbose)
-	// }
 }
 
-func LoopConfigFileClear(path string, iptables bool, verbose bool) {
-	ExitIfNotRoot()
+func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
+	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
 	var chainName string
@@ -257,22 +345,37 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) {
 			chainName = defaultChain
 		}
 		if defaultChain != "" {
-			createDefaultChain(defaultChain)
+			err := createDefaultChain(defaultChain)
+			if err != nil {
+				return err
+			}
 		}
 		if iptables {
-			removeIptableRule(rule, setName, chainName, verbose, true)
+			err := removeIptableRule(rule, setName, chainName, verbose, true)
+			if err != nil {
+				return err
+			}
 			time.Sleep(100 * time.Millisecond)
 		}
 		// Destroy set if it exists
 		err = ipset.Destroy(setName)
 		if err != nil {
 			if !strings.Contains(err.Error(), "The set with the given name does not exist") {
-				checkerr.Fatal(err)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 	if defaultChain != "" {
-		removeDefaultChainIptableRule(defaultChain, verbose, true)
-		removeDefaultChain(defaultChain, verbose)
+		err := removeDefaultChainIptableRule(defaultChain, verbose, true)
+		if err != nil {
+			return err
+		}
+		err = removeDefaultChain(defaultChain, verbose)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }

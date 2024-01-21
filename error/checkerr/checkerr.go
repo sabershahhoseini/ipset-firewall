@@ -1,6 +1,8 @@
 package checkerr
 
-import "log"
+import (
+	"log"
+)
 
 func Fatal(err error) {
 	if err != nil {
