@@ -23,14 +23,19 @@ type Rule struct {
 	Country  string   `yaml:"country"`
 	SetName  string   `yaml:"set"`
 	Path     []string `yaml:"file"`
+	ExtraIPs []string `yaml:"extraIPs"`
 	IPtables IPtablesRule
+}
+type Mattermost struct {
+	URL   string `yaml:"url"`
+	Token string `yaml:"token"`
 }
 
 // Inventory of all routes in yaml config
 type Inventory struct {
-	IPSetRules   []Rule `yaml:"rules"`
-	DefaultChain string `yaml:"defaultChain"`
-	BlockTor     bool   `yaml:"blockTor"`
+	IPSetRules   []Rule     `yaml:"rules"`
+	DefaultChain string     `yaml:"defaultChain"`
+	Mattermost   Mattermost `yaml:"mattermost"`
 }
 
 func ReadConfigFile(path string) string {
