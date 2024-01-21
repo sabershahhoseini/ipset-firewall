@@ -19,12 +19,12 @@ import (
 	"github.com/gmccue/go-ipset"
 )
 
-func removeDefaultChain(chainName string, verbose bool) error {
+func removeDefaultChain(chainName string, logFilePath string, verbose bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
-	logger.Log("Removing default chain "+chainName, verbose)
+	logger.Log("Removing default chain "+chainName, logFilePath, verbose)
 	chainExists, err := ipt.ChainExists("filter", chainName)
 	if err != nil {
 		return err
@@ -35,23 +35,23 @@ func removeDefaultChain(chainName string, verbose bool) error {
 			return err
 		}
 	}
-	logger.Log("Chain "+chainName+" does not exist. Already cleared?", verbose)
+	logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
 	return nil
 }
 
-func removeDefaultChainIptableRule(chainName string, verbose bool, clear bool) error {
+func removeDefaultChainIptableRule(chainName string, logFilePath string, verbose bool, clear bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Removing iptables rule to for default chain "+chainName, verbose)
+	logger.Log("Removing iptables rule to for default chain "+chainName, logFilePath, verbose)
 	if chainName != "INPUT" {
 		err = ipt.Delete("filter", "INPUT", "-j", chainName)
 		if err != nil {
 			if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
 				if clear {
-					logger.Log("Chain "+chainName+" does not exist. Already cleared?", verbose)
+					logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
 				}
 				return nil
 			}
@@ -59,7 +59,7 @@ func removeDefaultChainIptableRule(chainName string, verbose bool, clear bool) e
 		if err != nil {
 			return err
 		}
-		logger.Log("Removed iptables rule", verbose)
+		logger.Log("Removed iptables rule", logFilePath, verbose)
 	}
 	return nil
 }
@@ -81,13 +81,13 @@ func createDefaultChain(chainName string) error {
 	}
 	return nil
 }
-func addDefaultChainIptableRule(chainName string, verbose bool) error {
+func addDefaultChainIptableRule(chainName string, logFilePath string, verbose bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Adding iptables rule to for default chain "+chainName, verbose)
+	logger.Log("Adding iptables rule to for default chain "+chainName, logFilePath, verbose)
 	if chainName != "INPUT" {
 		err = ipt.InsertUnique("filter", "INPUT", 1, "-j", chainName)
 		if err != nil {
@@ -97,7 +97,7 @@ func addDefaultChainIptableRule(chainName string, verbose bool) error {
 	return nil
 }
 
-func addIptableRule(rule models.Rule, setName string, chainName string, verbose bool) error {
+func addIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func addIptableRule(rule models.Rule, setName string, chainName string, verbose 
 
 	rulePolicy := strings.ToUpper(rule.Policy)
 
-	logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, verbose)
+	logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
 	err = ipt.InsertUnique("filter", chainName, 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
 	if err != nil {
 		return err
@@ -113,13 +113,13 @@ func addIptableRule(rule models.Rule, setName string, chainName string, verbose 
 	return nil
 }
 
-func removeIptableRule(rule models.Rule, setName string, chainName string, verbose bool, clear bool) error {
+func removeIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool, clear bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Removing iptables rule to chain "+chainName+" and set "+setName, verbose)
+	logger.Log("Removing iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
 
 	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "ACCEPT")
 	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "DROP")
@@ -128,7 +128,7 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, verbo
 			return nil
 		} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
 			if clear {
-				logger.Log("Rule not found. Already cleared?", verbose)
+				logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
 			}
 			return nil
 		}
@@ -136,11 +136,11 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, verbo
 			return err
 		}
 	}
-	logger.Log("Removed iptables rule", verbose)
+	logger.Log("Removed iptables rule", logFilePath, verbose)
 	return nil
 }
 
-func convertIPListToRestoreFile(ipList []string, prefixString string, verbose bool) []string {
+func convertIPListToRestoreFile(ipList []string, prefixString string, logFilePath string, verbose bool) []string {
 	for i, ip := range ipList {
 		tmpIP, isValid := netutils.IsCIDRValid(ip)
 		if !isValid {
@@ -148,7 +148,7 @@ func convertIPListToRestoreFile(ipList []string, prefixString string, verbose bo
 		}
 		ip = tmpIP
 		if verbose {
-			fmt.Printf("Adding %v\n", ip)
+			logger.Log("Adding "+ip, logFilePath, verbose)
 		}
 		ipList[i] = prefixString + " " + ip
 	}
@@ -162,7 +162,8 @@ func includeExtraIPs(ipList []string, extraIPs []string) []string {
 	return ipList
 }
 
-func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, defaultChain string, rule models.Rule, mattermost file.Mattermost, verbose bool) error {
+func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, defaultChain string,
+	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	var countryCode string
 	var setName string
@@ -214,7 +215,7 @@ func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, d
 	}
 
 	// Convert IP pool to a file acceptable by ipset
-	ipList = convertIPListToRestoreFile(ipList, "add "+tmpSetName, verbose)
+	ipList = convertIPListToRestoreFile(ipList, "add "+tmpSetName, logFilePath, verbose)
 
 	file.ExportToFile(tmpSetFile, ipList, verbose)
 	ipset.Restore(tmpSetFile)
@@ -248,7 +249,7 @@ func IPsetfw(ipList []string, set models.Set, iptables bool, chainName string, d
 		checkerr.Fatal(err)
 	}
 	if iptables {
-		err := addIptableRule(rule, setName, chainName, verbose)
+		err := addIptableRule(rule, setName, chainName, logFilePath, verbose)
 		if err != nil {
 			notifMsg = notifMsgInfo + "ERROR: Could not add rule for set: " + setName + " - chain: " + chainName
 			if notifyMattermost {
@@ -280,6 +281,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 	var set models.Set
 	var rule models.Rule
 	var mattermost file.Mattermost
+	var logFilePath string = inventory.LogFilePath
 	if inventory.Mattermost.Token != "" && inventory.Mattermost.URL != "" {
 		mattermost = inventory.Mattermost
 	}
@@ -304,15 +306,15 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 		chainName = r.IPtables.Chain
 		if len(r.Path) != 0 {
 			for _, path := range r.Path {
-				ipList = netutils.FetchIPPool(*&set.Country, verbose, path)
+				ipList = netutils.FetchIPPool(*&set.Country, verbose, path, logFilePath)
 				ipList = includeExtraIPs(ipList, r.ExtraIPs)
 				ipListConcatenated = append(ipListConcatenated, ipList...)
 			}
-			IPsetfw(ipListConcatenated, set, iptables, chainName, defaultChain, rule, mattermost, verbose)
+			IPsetfw(ipListConcatenated, set, iptables, chainName, defaultChain, rule, mattermost, logFilePath, verbose)
 		} else {
-			ipList := netutils.FetchIPPool(*&set.Country, verbose, "")
+			ipList := netutils.FetchIPPool(*&set.Country, verbose, "", logFilePath)
 			ipList = includeExtraIPs(ipList, r.ExtraIPs)
-			IPsetfw(ipList, set, iptables, chainName, defaultChain, rule, mattermost, verbose)
+			IPsetfw(ipList, set, iptables, chainName, defaultChain, rule, mattermost, logFilePath, verbose)
 		}
 	}
 }
@@ -351,7 +353,7 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 			}
 		}
 		if iptables {
-			err := removeIptableRule(rule, setName, chainName, verbose, true)
+			err := removeIptableRule(rule, setName, chainName, "", verbose, true)
 			if err != nil {
 				return err
 			}
@@ -368,11 +370,11 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 		}
 	}
 	if defaultChain != "" {
-		err := removeDefaultChainIptableRule(defaultChain, verbose, true)
+		err := removeDefaultChainIptableRule(defaultChain, "", verbose, true)
 		if err != nil {
 			return err
 		}
-		err = removeDefaultChain(defaultChain, verbose)
+		err = removeDefaultChain(defaultChain, "", verbose)
 		if err != nil {
 			return err
 		}

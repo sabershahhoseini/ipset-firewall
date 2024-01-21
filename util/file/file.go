@@ -36,6 +36,7 @@ type Inventory struct {
 	IPSetRules   []Rule     `yaml:"rules"`
 	DefaultChain string     `yaml:"defaultChain"`
 	Mattermost   Mattermost `yaml:"mattermost"`
+	LogFilePath  string     `yaml:"logFile"`
 }
 
 func ReadConfigFile(path string) string {
@@ -87,8 +88,8 @@ func ExportToFile(filePath string, ipList []string, verbose bool) {
 		}
 		_, _ = datawriter.WriteString(data + "\n")
 	}
-	logger.Log("Successfully created file with "+fmt.Sprint((len(ipList)))+" number of entries", verbose)
-	logger.Log("File exported at "+filePath, verbose)
+	logger.Log("Successfully created file with "+fmt.Sprint((len(ipList)))+" number of entries", "", verbose)
+	logger.Log("File exported at "+filePath, "", verbose)
 
 	datawriter.Flush()
 	file.Close()
