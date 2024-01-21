@@ -9,8 +9,6 @@ mattermost:
 # If iptables variable is defined, iptable rules will be created too.
 rules:
   - country: ir
-    file:
-      - "/tmp/ip-list.txt"
     set: ir-block
     extraIPs:
       - "192.168.169.0/24"
