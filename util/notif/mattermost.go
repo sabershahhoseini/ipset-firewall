@@ -9,6 +9,9 @@ import (
 )
 
 func SendNotificationMattermost(message, mattermostUrl, mattermostToken string) {
+	if mattermostToken == "" || mattermostUrl == "" {
+		return
+	}
 	postBody, _ := json.Marshal(map[string]string{
 		"text": message,
 	})
