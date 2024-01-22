@@ -47,6 +47,7 @@ func NetworkContainsIP(cidr string, ip string) bool {
 
 func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 	for _, ip := range ipList {
+
 		_, isValid := IsCIDRValid(ip)
 		if !isValid {
 			continue
@@ -119,6 +120,8 @@ func MergeIPsToCIDRs(ipList []string) []string {
 			_, ipn, err := net.ParseCIDR(ip + "/32")
 			checkerr.Fatal(err)
 			ipNet = ipn
+		} else {
+			_, ipNet, _ = net.ParseCIDR(ip)
 		}
 		ipNetList = append(ipNetList, ipNet)
 	}
