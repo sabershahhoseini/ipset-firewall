@@ -47,6 +47,7 @@ func NetworkContainsIP(cidr string, ip string) bool {
 
 func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 	for _, ip := range ipList {
+
 		_, isValid := IsCIDRValid(ip)
 		if !isValid {
 			continue
@@ -60,7 +61,7 @@ func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 	return false
 }
 
-func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
+func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath string) []string {
 
 	var ipList []string
 	var url string
@@ -75,7 +76,7 @@ func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
 
 	// If file argument is passed, read file and create set
 	if filePath != "" {
-		logger.Log("Reading file from "+filePath, verbose)
+		logger.Log("Reading file from "+filePath, logFilePath, verbose)
 		ipList = file.ReadListFile(filePath)
 		return ipList
 	}
@@ -87,7 +88,7 @@ func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
 
 	client := &http.Client{}
 
-	logger.Log("Trying to get url: "+url, verbose)
+	logger.Log("Trying to get url: "+url, logFilePath, verbose)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatalln(err)
@@ -100,7 +101,8 @@ func FetchIPPool(countryCode string, verbose bool, filePath string) []string {
 		log.Fatalln(err)
 	}
 	list := strings.Split(string(b), "\n")
-	logger.Log("Finished fetching list of IPs", verbose)
+	logger.Log("Finished fetching list of IPs", logFilePath, verbose)
+	list = MergeIPsToCIDRs(list)
 	return list
 }
 
@@ -118,6 +120,8 @@ func MergeIPsToCIDRs(ipList []string) []string {
 			_, ipn, err := net.ParseCIDR(ip + "/32")
 			checkerr.Fatal(err)
 			ipNet = ipn
+		} else {
+			_, ipNet, _ = net.ParseCIDR(ip)
 		}
 		ipNetList = append(ipNetList, ipNet)
 	}
