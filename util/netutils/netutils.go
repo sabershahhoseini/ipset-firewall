@@ -101,6 +101,7 @@ func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath 
 	}
 	list := strings.Split(string(b), "\n")
 	logger.Log("Finished fetching list of IPs", logFilePath, verbose)
+	list = MergeIPsToCIDRs(list)
 	return list
 }
 

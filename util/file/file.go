@@ -14,9 +14,10 @@ import (
 )
 
 type IPtablesRule struct {
-	Policy string `yaml:"policy"`
-	Insert int    `yaml:"insert"`
-	Chain  string `yaml:"chain"`
+	Policy string   `yaml:"policy"`
+	Insert int      `yaml:"insert"`
+	Type   []string `yaml:"type"`
+	Chain  string   `yaml:"chain"`
 }
 
 type Rule struct {

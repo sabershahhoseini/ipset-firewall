@@ -105,15 +105,19 @@ func addIptableRule(rule models.Rule, setName string, chainName string, logFileP
 
 	rulePolicy := strings.ToUpper(rule.Policy)
 
-	logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
-	err = ipt.InsertUnique("filter", chainName, 1, "-m", "set", "--match-set", setName, "src", "-j", rulePolicy)
-	if err != nil {
-		return err
+	for _, ruleType := range rule.Type {
+		logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
+		err = ipt.InsertUnique("filter", chainName, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func removeIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool, clear bool) error {
+	var actions []string
+	actions = []string{"DROP", "ACCEPT"}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
@@ -121,19 +125,22 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, logFi
 
 	logger.Log("Removing iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
 
-	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "ACCEPT")
-	err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, "src", "-j", "DROP")
-	if err != nil {
-		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
-			return nil
-		} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
-			if clear {
-				logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
+	for _, ruleType := range rule.Type {
+		for _, terminateAction := range actions {
+			err = ipt.Delete("filter", chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
+			if err != nil {
+				if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
+					return nil
+				} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
+					if clear {
+						logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
+					}
+					return nil
+				}
+				if err != nil {
+					return err
+				}
 			}
-			return nil
-		}
-		if err != nil {
-			return err
 		}
 	}
 	logger.Log("Removed iptables rule", logFilePath, verbose)
@@ -299,6 +306,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 		rule = models.Rule{
 			Policy: r.IPtables.Policy,
 			Insert: r.IPtables.Insert,
+			Type:   r.IPtables.Type,
 		}
 		if r.IPtables.Policy != "" {
 			iptables = true
@@ -336,6 +344,7 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 		rule = models.Rule{
 			Policy: r.IPtables.Policy,
 			Insert: r.IPtables.Insert,
+			Type:   r.IPtables.Type,
 		}
 		if r.IPtables.Policy != "" {
 			iptables = true

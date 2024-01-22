@@ -7,4 +7,5 @@ type Set struct {
 type Rule struct {
 	Policy string
 	Insert int
+	Type   []string
 }
