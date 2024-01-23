@@ -62,7 +62,6 @@ rules:
     iptables:
       policy: drop
       insert: 1
-      chain: INPUT
 
   - file:
     - /tmp/US-list.txt
@@ -72,6 +71,8 @@ rules:
     iptables:
       policy: drop
       insert: 2
+      chain: "IPSET_FW"
+      table: "filter"
 ```
 
 As you can see, you can only give country code to fetch list of IPs from github.
