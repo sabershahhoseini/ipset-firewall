@@ -1,6 +1,3 @@
-# Default chain will be created if it's defined. Each rule
-# with iptables.chain = nil will inherite chain from default chain.
-defaultChain: "IPSET_FW"
 logFile: "./log.txt"
 
 # Uncomment if you want to use mattermost to notify logs
@@ -14,30 +11,31 @@ rules:
   - country: "ir"
     set: "ir-block"
     extraIPs:
-      - "192.168.0.0/16"
-      - "172.16.0.0/16"
       - "10.0.0.0/8"
+      - "192.168.1.0/24"
     iptables:
       policy: "drop"
       insert: 1
       type:
         - "dst"
+      chain: "IPSET_FW"
+      table: "raw"
 
-        #  - country: tor
-        #    set: tor-block
-        #    iptables:
-        #      policy: drop
-        #      insert: 2
-        #
-        #  # file is a list of files of network pools
-        #  - file:
-        #    - /tmp/US-list.txt
-        #    - /tmp/DE-list.txt
-        #
-        #    # When file is defined, country only is only used for logs
-        #    country: us
-        #    set: us-block
-        #    iptables:
-        #      policy: accept
-        #      insert: 3
-        #      # If you don't define any chain, default chain will be used
+  - country: tor
+    set: tor-block
+    iptables:
+      policy: drop
+      insert: 2
+
+  # file is a list of files of network pools
+  - file:
+    - /tmp/US-list.txt
+    - /tmp/DE-list.txt
+
+    # When file is defined, country only is only used for logs
+    country: us
+    set: us-block
+    iptables:
+      policy: accept
+      insert: 3
+      # If you don't define any chain, default chain will be used
