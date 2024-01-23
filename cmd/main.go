@@ -24,6 +24,8 @@ func main() {
 	verbose := flag.Bool("v", false, "Verbose mode")
 	export := flag.Bool("export", false, "Export to file")
 	clear := flag.Bool("clear", false, "Clear everything")
+	rollback := flag.Bool("rollback", false, "rollback set with previous backup set")
+	list := flag.Bool("list", false, "List sets")
 	config := flag.String("config", "", "Use yaml config file")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
@@ -46,6 +48,11 @@ Options:
 	-iptables				setup iptables rules
 	-chain		{CHAIN}			iptables chain to add rules to. defaults to INPUT
 	-policy		{POLICY}		works with -iptables and sets default policy
+	
+	-rollback	{SETNAME}		rollback set with previous backup set
+
+	-list					list all sets
+	-list		{SETNAME}	list specific set
 
 	-clear					clear everything
 
@@ -93,11 +100,17 @@ Check if IP exists in IR (Iran):
 		file.ExportToFile(*filePath, ipList, *verbose)
 	} else if *config != "" && !*clear {
 		ipsetfw.LoopConfigFile(*config, *iptables, *verbose)
+	} else if *list && *setName != "" {
+		ipsetfw.ListSet(*setName, *verbose)
+	} else if *list {
+		ipsetfw.ListAllSets(*verbose)
+	} else if *rollback && *setName != "" {
+		ipsetfw.RollbackSet(*setName)
 	} else if *clear {
 		ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose)
 	} else if *countryCode != "" && *setName != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
-		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, "INPUT", rule, file.Mattermost{}, "", *verbose)
+		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, rule, file.Mattermost{}, "", *verbose)
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		netutils.CheckIPExistsInPool(ipList, *checkIP, *verbose)
