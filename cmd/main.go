@@ -60,11 +60,20 @@ Options:
 
 Example usage:
 
-Read rules from config file:
+List rules:
+	ipsetfw -list -v
+
+List specific rule:
+	ipsetfw -list -set ir-block
+
+Read rules from config file and setup ipset:
 	ipsetfw -config ipsetfw.yml
 
 Clear rules defined in config file:
 	ipsetfw -config ipsetfw.yml -clear
+
+Rollback a broken update to previous working set:
+	ipsetfw -rollback -set ir-block
 
 Create a set of Iran IP pool:
 	ipsetfw -country ir -set set
