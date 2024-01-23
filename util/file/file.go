@@ -9,23 +9,17 @@ import (
 	"strings"
 
 	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
+	"github.com/sabershahhoseini/ipset-firewall/models"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 	"gopkg.in/yaml.v2"
 )
 
-type IPtablesRule struct {
-	Policy string   `yaml:"policy"`
-	Insert int      `yaml:"insert"`
-	Type   []string `yaml:"type"`
-	Chain  string   `yaml:"chain"`
-}
-
 type Rule struct {
-	Country  string   `yaml:"country"`
-	SetName  string   `yaml:"set"`
-	Path     []string `yaml:"file"`
-	ExtraIPs []string `yaml:"extraIPs"`
-	IPtables IPtablesRule
+	Country  string      `yaml:"country"`
+	SetName  string      `yaml:"set"`
+	Path     []string    `yaml:"file"`
+	ExtraIPs []string    `yaml:"extraIPs"`
+	IPtables models.Rule `yaml:"iptables"`
 }
 type Mattermost struct {
 	URL   string `yaml:"url"`
@@ -34,10 +28,9 @@ type Mattermost struct {
 
 // Inventory of all routes in yaml config
 type Inventory struct {
-	IPSetRules   []Rule     `yaml:"rules"`
-	DefaultChain string     `yaml:"defaultChain"`
-	Mattermost   Mattermost `yaml:"mattermost"`
-	LogFilePath  string     `yaml:"logFile"`
+	IPSetRules  []Rule     `yaml:"rules"`
+	Mattermost  Mattermost `yaml:"mattermost"`
+	LogFilePath string     `yaml:"logFile"`
 }
 
 func ReadConfigFile(path string) string {

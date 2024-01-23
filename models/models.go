@@ -5,7 +5,9 @@ type Set struct {
 	SetName string
 }
 type Rule struct {
-	Policy string
-	Insert int
-	Type   []string
+	Policy string   `yaml:"policy"`
+	Insert int      `yaml:"insert"`
+	Type   []string `yaml:"type"`
+	Chain  string   `yaml:"chain"`
+	Table  string   `yaml:"table"`
 }
