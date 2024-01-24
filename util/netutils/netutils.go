@@ -78,7 +78,9 @@ func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath 
 	if filePath != "" {
 		logger.Log("Reading file from "+filePath, logFilePath, verbose)
 		ipList = file.ReadListFile(filePath)
-		return ipList
+		list := MergeIPsToCIDRs(ipList)
+		fmt.Println(list)
+		return list
 	}
 	// Else, go fetch from github
 	req, err := http.NewRequest("GET", url, nil)
