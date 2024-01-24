@@ -173,7 +173,7 @@ func includeExtraIPs(ipList []string, extraIPs []string) []string {
 func parseIPAndCIDR(ip string) (net.IP, uint8) {
 	parsedIP, _, _ := net.ParseCIDR(ip)
 	cidr := strings.Split(string(ip), "/")
-	cidrInt, _ := strconv.Atoi(cidr[0])
+	cidrInt, _ := strconv.Atoi(cidr[1])
 	cidr8 := uint8(cidrInt)
 	return parsedIP, cidr8
 }
