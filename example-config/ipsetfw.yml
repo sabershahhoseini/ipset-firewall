@@ -20,6 +20,8 @@ rules:
         - "dst"
       chain: "IPSET_FW"
       table: "raw"
+      # If source IP was NOT from Iran, drop it
+      not: true
 
   - country: tor
     set: tor-block

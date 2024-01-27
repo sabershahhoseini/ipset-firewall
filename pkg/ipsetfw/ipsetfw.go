@@ -106,10 +106,20 @@ func addIptableRule(rule models.Rule, setName string, chainName string, logFileP
 
 	rulePolicy := strings.ToUpper(rule.Policy)
 
+	if len(rule.Type) == 0 {
+		rule.Type = append(rule.Type, "src")
+	}
 	for _, ruleType := range rule.Type {
+
+		if rule.Not {
+			err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "!", "--match-set", setName, ruleType, "-j", rulePolicy)
+		} else {
+			err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
+		}
 		logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
-		err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
+		// err = ipt.InsertUnique(rule.Table, chainName, rule.Insert)
 		if err != nil {
+			fmt.Println(err)
 			return err
 		}
 	}
@@ -124,11 +134,19 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, logFi
 		return err
 	}
 
+	if len(rule.Type) == 0 {
+		rule.Type = append(rule.Type, "src")
+	}
+
 	logger.Log("Removing iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
 
 	for _, ruleType := range rule.Type {
 		for _, terminateAction := range actions {
-			err = ipt.Delete(rule.Table, chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
+			if rule.Not {
+				err = ipt.Delete(rule.Table, chainName, "-m", "set", "!", "--match-set", setName, ruleType, "-j", terminateAction)
+			} else {
+				err = ipt.Delete(rule.Table, chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
+			}
 			if err != nil {
 				if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
 					return nil
@@ -356,6 +374,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			Type:   r.IPtables.Type,
 			Chain:  r.IPtables.Chain,
 			Table:  r.IPtables.Table,
+			Not:    r.IPtables.Not,
 		}
 		if r.IPtables.Policy != "" {
 			iptables = true
