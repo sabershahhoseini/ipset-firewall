@@ -275,6 +275,25 @@ hooks:
 
 Examples are in `contrib/hooks/`: `health-check.sh` (roll back if your site stops answering) and `save-to-file.sh` (keep every run's report).
 
+### Change guard
+
+`maxChange` refuses an update that would change a list too much, for example when an upstream file breaks and suddenly lists almost nothing.
+
+```yaml
+maxChange: 50%          # top level: no list may change by more than half its entries
+block:
+  - ir
+  - name: scanners
+    file: [/etc/ipsetfw/scanners.txt]
+    maxChange: off      # this list may change by any amount
+```
+
+* The change counts entries added plus entries removed, as a percentage of the list's current entries. Replacing 10 entries with 10 different ones is 200%.
+* A refused list is reported as `failed` with the reason, and the other lists still run. The live list is kept, and the temporary set is removed.
+* The first update of a list is never guarded, and neither is a list whose type changes.
+* `-force` accepts the change. It also ignores fresh cached lists.
+* Values: `N%` from `1%` to `1000%`, or `off`.
+
 ### Run report
 
 Every apply ends with a one-line summary, for example `Summary: 1 updated, 4 unchanged, 0 failed`. The full report is saved as `last-run.json`, next to the state file. For each list it gives the status (`updated`, `unchanged`, `failed` or `skipped`), the entries, how many were added and removed, the source, and any error. It also records the allow-only state and whether anything changed.

@@ -36,7 +36,7 @@ func main() {
 	verify := flag.Bool("verify", false, "With -config: check the live firewall matches the config; exit 1 on differences")
 	testHook := flag.String("test-hook", "", "With -config: run the before, after or onError hooks against a sample report; changes nothing")
 	restore := flag.Bool("restore", false, "Put back the last saved snapshot (persist: true); for boot, no network needed")
-	force := flag.Bool("force", false, "Ignore fresh cached lists and download again")
+	force := flag.Bool("force", false, "Ignore fresh cached lists and maxChange; download again")
 	mirror := flag.String("mirror", "", "Directory of <code>.txt lists to use before any download")
 	offlineFlag := flag.Bool("offline", false, "Never touch the network; use the mirror and cache only")
 	unattended := flag.Bool("unattended", false, "Install allow-only without the interactive confirmation (still checks SSH clients)")
@@ -64,7 +64,7 @@ Options:
 	-restore				put back the last saved snapshot (persist: true); used at boot
 	-status					with -config: show the live state of each block
 	-verify					with -config: check the live firewall matches the config; exit 1 on differences
-	-force					ignore fresh cached lists and download again
+	-force					ignore fresh cached lists and maxChange; download again
 	-mirror		{DIR}			use <code>.txt files in DIR before any download
 	-offline				never touch the network; mirror and cache only
 	-unattended				install allow-only without the interactive confirmation

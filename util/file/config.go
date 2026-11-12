@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,6 +41,8 @@ type BlockEntry struct {
 	Ports []int `yaml:"ports"`
 	// Proto is tcp or udp when Ports is set; default tcp.
 	Proto string `yaml:"proto"`
+	// MaxChange overrides the top-level maxChange for this list: "N%" (1-1000) or "off".
+	MaxChange string `yaml:"maxChange"`
 	// Address is set when the entry was written as a bare address.
 	Address string `yaml:"-"`
 }
@@ -176,6 +179,9 @@ func (inv Inventory) Validate() error {
 			return fmt.Errorf("cache.maxAge: %w", err)
 		}
 	}
+	if _, _, err := ParseMaxChange(inv.MaxChange); err != nil && inv.MaxChange != "" {
+		return fmt.Errorf("maxChange: %w", err)
+	}
 	if (len(inv.Block) > 0 || len(inv.Allow) > 0 || len(inv.Only) > 0) && len(inv.IPSetRules) > 0 {
 		return fmt.Errorf("config mixes 'rules' with 'block'/'allow'/'only'; use one format")
 	}
@@ -250,6 +256,11 @@ func (inv Inventory) Validate() error {
 
 // checkList validates one allow or block list and records its set name in seen.
 func checkList(b BlockEntry, kind string, seen map[string]bool) error {
+	if b.MaxChange != "" {
+		if _, _, err := ParseMaxChange(b.MaxChange); err != nil {
+			return fmt.Errorf("%s %q: %w", kind, b.Name, err)
+		}
+	}
 	if b.Country == "" && len(b.File) == 0 && len(b.IPs) == 0 {
 		return fmt.Errorf("%s %q has no source: set country, file or ips", kind, b.Name)
 	}
@@ -334,4 +345,23 @@ func CanonicalAddr(s string) (string, error) {
 	}
 	_, n, _ := net.ParseCIDR(s)
 	return n.String(), nil
+}
+
+// ParseMaxChange reads a change limit. "" means no limit (off is false, percent 0). "off" turns the
+// guard off. "N%" with N from 1 to 1000 is a limit in percent of the list's current entries.
+func ParseMaxChange(v string) (percent int, off bool, err error) {
+	switch v {
+	case "":
+		return 0, false, nil
+	case "off":
+		return 0, true, nil
+	}
+	if !strings.HasSuffix(v, "%") {
+		return 0, false, fmt.Errorf("maxChange must be N%% (1-1000) or off, got %q", v)
+	}
+	n, convErr := strconv.Atoi(strings.TrimSuffix(v, "%"))
+	if convErr != nil || n < 1 || n > 1000 {
+		return 0, false, fmt.Errorf("maxChange must be N%% (1-1000) or off, got %q", v)
+	}
+	return n, false, nil
 }

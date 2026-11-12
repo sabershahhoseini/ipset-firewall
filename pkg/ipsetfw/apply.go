@@ -245,7 +245,7 @@ func blockEntries(b file.BlockEntry, nets []string) []ipset.Entry {
 // changed. Allow rules are inserted at the top; block rules are appended, so they always come
 // after every allow rule and do not depend on other lists. Mattermost hears about a list only
 // when its contents changed or it failed.
-func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFilePath string, verbose bool) (listReport, error) {
+func applyList(ipt *iptables.IPTables, l list, maxPercent int, mattermost file.Mattermost, logFilePath string, verbose bool) (listReport, error) {
 	r := baseRule()
 	b := l.entry
 	name := l.setName()
@@ -270,7 +270,7 @@ func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFi
 	}
 	entries := blockEntries(b, nets)
 	onTypeChange := func() error { return deleteRulesForSet(ipt, r, name) }
-	change, err := replaceSet(name, setTypeOf(b), entries, onTypeChange, logFilePath, verbose)
+	change, err := replaceSet(name, setTypeOf(b), entries, onTypeChange, maxPercent, logFilePath, verbose)
 	if err != nil {
 		return fail("could not update set "+name, err)
 	}
@@ -387,7 +387,7 @@ func applyBlockAllowRun(inv file.Inventory, rep *runReport, verbose bool) error 
 	var failed []string
 	applied := map[string]bool{}
 	run := func(l list) {
-		lr, err := applyList(ipt, l, mattermost, logFilePath, verbose)
+		lr, err := applyList(ipt, l, maxChangeFor(inv, l), mattermost, logFilePath, verbose)
 		rep.Lists = append(rep.Lists, lr)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, l.kind+" "+l.entry.Name+" not updated: "+err.Error())

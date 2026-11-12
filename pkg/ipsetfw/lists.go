@@ -134,3 +134,17 @@ func allListsOf(inv file.Inventory) []list {
 	out = append(out, onlyListsOf(inv)...)
 	return append(out, blockListsOf(inv)...)
 }
+
+// maxChangeFor is the change guard in percent for one list: its own maxChange if set, else the
+// config's, else 0 (no guard). "off" gives 0.
+func maxChangeFor(inv file.Inventory, l list) int {
+	v := inv.MaxChange
+	if l.entry.MaxChange != "" {
+		v = l.entry.MaxChange
+	}
+	percent, _, err := file.ParseMaxChange(v)
+	if err != nil {
+		return 0 // Validate has already refused bad values; this never happens for a checked config
+	}
+	return percent
+}

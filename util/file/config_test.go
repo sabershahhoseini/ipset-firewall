@@ -271,3 +271,36 @@ func TestWebhookErrorsAndLabelsNeverShowTheURL(t *testing.T) {
 		t.Errorf("label for garbage = %q", WebhookLabel("garbage"))
 	}
 }
+
+func TestParseMaxChange(t *testing.T) {
+	ok := map[string]int{"": 0, "1%": 1, "50%": 50, "1000%": 1000}
+	for in, want := range ok {
+		got, off, err := ParseMaxChange(in)
+		if err != nil || off || got != want {
+			t.Errorf("ParseMaxChange(%q) = %d,%v,%v; want %d", in, got, off, err, want)
+		}
+	}
+	if _, off, err := ParseMaxChange("off"); err != nil || !off {
+		t.Errorf("off: off=%v err=%v", off, err)
+	}
+	for _, bad := range []string{"0%", "1001%", "5000%", "abc", "50", "-5%", "%", "5.5%"} {
+		if _, _, err := ParseMaxChange(bad); err == nil {
+			t.Errorf("ParseMaxChange(%q) accepted", bad)
+		}
+	}
+}
+
+func TestMaxChangeValidation(t *testing.T) {
+	if err := parse(t, "maxChange: 50%\nblock:\n  - name: a\n    ips: [192.0.2.1]\n    maxChange: off\n").Validate(); err != nil {
+		t.Errorf("valid maxChange rejected: %v", err)
+	}
+	for _, doc := range []string{
+		"maxChange: 0%\nblock: [ir]\n",
+		"maxChange: 5000%\nblock: [ir]\n",
+		"block:\n  - name: a\n    ips: [192.0.2.1]\n    maxChange: abc\n",
+	} {
+		if err := parse(t, doc).Validate(); err == nil || !strings.Contains(err.Error(), "maxChange") {
+			t.Errorf("%q: error = %v", doc, err)
+		}
+	}
+}

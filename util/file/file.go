@@ -39,6 +39,7 @@ type Inventory struct {
 	Offline     bool         `yaml:"offline"`
 	StateFile   string       `yaml:"stateFile"`
 	Hooks       HooksConfig  `yaml:"hooks"`
+	MaxChange   string       `yaml:"maxChange"`
 	Persist     bool         `yaml:"persist"`
 	PersistDir  string       `yaml:"persistDir"`
 	LogFilePath string       `yaml:"logFile"`

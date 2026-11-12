@@ -38,6 +38,7 @@ cache:
   maxAge: 12h
 
 mirror: /srv/ipsetfw/mirror             # <code>.txt files here are used before any download
+maxChange: 50%                          # refuse a list update that changes more than half its entries (-force accepts)
 offline: false                          # true = never use the network (mirror and cache only)
 
 # Programs to run around a run. Each must be an absolute path, owned by root, not writable by others.
@@ -81,6 +82,7 @@ block:
   - name: scanners
     file: [/etc/ipsetfw/scanners.txt]
     ips: [192.0.2.128/25]
+    maxChange: off                      # this list may change by any amount
   - name: ssh-cn
     country: cn
     ports: [22]                         # block China on SSH only

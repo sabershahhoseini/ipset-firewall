@@ -309,7 +309,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 		}
 	}
 
-	if _, err := replaceSet(setName, "hash:net", netEntries(ipListMerged), nil, logFilePath, verbose); err != nil {
+	if _, err := replaceSet(setName, "hash:net", netEntries(ipListMerged), nil, 0, logFilePath, verbose); err != nil {
 		return fail("could not update set "+setName, err)
 	}
 

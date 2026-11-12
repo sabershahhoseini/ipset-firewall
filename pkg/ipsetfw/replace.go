@@ -20,7 +20,9 @@ import (
 // it was. If the live set exists with another type, onTypeChange is called first to remove the
 // rules that use it; the old set and its backup are then destroyed and the new set takes its place.
 // With onTypeChange nil, a type change is refused.
-func replaceSet(setName, typ string, entries []ipset.Entry, onTypeChange func() error, logFilePath string, verbose bool) (setChange, error) {
+// maxPercent is the change guard: 0 means no guard. An update that would change more than that
+// percentage of the live set's entries is refused, unless -force is given.
+func replaceSet(setName, typ string, entries []ipset.Entry, onTypeChange func() error, maxPercent int, logFilePath string, verbose bool) (setChange, error) {
 	change := setChange{Total: len(entries)}
 	tmpSetName := setName + "-tmp"
 	backupSetName := setName + "-bak"
@@ -65,6 +67,17 @@ func replaceSet(setName, typ string, entries []ipset.Entry, onTypeChange func() 
 		return change, abort("could not inspect set "+setName, err)
 	}
 	exists := err == nil
+
+	// Change guard: only for an existing set of the same type that has entries.
+	if exists && live.TypeName == typ && live.NumEntries > 0 && maxPercent > 0 && !ForceRefresh {
+		added, removed := diffEntries(live.Entries, entries)
+		pct := changePercent(added, removed, int(live.NumEntries))
+		if pct > maxPercent {
+			_ = ipset.Destroy(tmpSetName)
+			return change, fmt.Errorf("%s would change by %d%% (+%d -%d of %d entries), above maxChange %d%%; run with -force to accept",
+				setName, pct, added, removed, live.NumEntries, maxPercent)
+		}
+	}
 
 	if exists && live.TypeName != typ {
 		if onTypeChange == nil {
@@ -111,6 +124,16 @@ func replaceSet(setName, typ string, entries []ipset.Entry, onTypeChange func() 
 		return change, fmt.Errorf("set %s was updated, but the backup could not be saved as %s: %w", setName, backupSetName, err)
 	}
 	return change, nil
+}
+
+// changePercent is how much a set changes, in percent of its current entries: entries added plus
+// entries removed, relative to the current count (rounded down). A set with no entries has no
+// meaningful percentage and is reported as 0.
+func changePercent(added, removed, current int) int {
+	if current <= 0 {
+		return 0
+	}
+	return (added + removed) * 100 / current
 }
 
 // describeEntry is a short text form of an entry for logs.
