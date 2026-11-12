@@ -23,47 +23,51 @@ import (
 )
 
 func removeDefaultChain(chainName string, tableName string, logFilePath string, verbose bool) error {
+	if isBuiltinChain(chainName) {
+		return nil
+	}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
-	logger.Log("Removing default chain "+chainName, logFilePath, verbose)
 	chainExists, err := ipt.ChainExists(tableName, chainName)
 	if err != nil {
 		return err
 	}
-	if chainExists {
-		err = ipt.DeleteChain(tableName, chainName)
-		if err != nil {
-			return err
-		}
+	if !chainExists {
+		logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
+		return nil
 	}
-	logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
+	logger.Log("Removing chain "+chainName, logFilePath, verbose)
+	if err := ipt.DeleteChain(tableName, chainName); err != nil {
+		return err
+	}
+	logger.Log("Removed chain "+chainName, logFilePath, verbose)
 	return nil
 }
 
-func removeDefaultChainIptableRule(chainName string, tableName string, logFilePath string, verbose bool, clear bool) error {
+// removeDefaultChainIptableRule removes the jump from parentChain to chainName.
+func removeDefaultChainIptableRule(chainName string, tableName string, parentChain string, logFilePath string, verbose bool, clear bool) error {
+	if isBuiltinChain(chainName) {
+		return nil
+	}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Removing iptables rule to for default chain "+chainName, logFilePath, verbose)
-	if chainName != "INPUT" {
-		err = ipt.Delete(tableName, "INPUT", "-j", chainName)
-		if err != nil {
-			if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
-				if clear {
-					logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
-				}
-				return nil
+	logger.Log("Removing jump from "+parentChain+" to chain "+chainName, logFilePath, verbose)
+	err = ipt.Delete(tableName, parentChain, "-j", chainName)
+	if err != nil {
+		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
+			if clear {
+				logger.Log("Jump from "+parentChain+" to "+chainName+" not found. Already cleared?", logFilePath, verbose)
 			}
+			return nil
 		}
-		if err != nil {
-			return err
-		}
-		logger.Log("Removed iptables rule", logFilePath, verbose)
+		return err
 	}
+	logger.Log("Removed iptables rule", logFilePath, verbose)
 	return nil
 }
 
@@ -156,8 +160,7 @@ func addIptableRule(rule models.Rule, setName string, logFilePath string, verbos
 }
 
 func removeIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool, clear bool) error {
-	var actions []string
-	actions = []string{"DROP", "ACCEPT"}
+	actions := []string{"DROP", "ACCEPT"}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
@@ -171,24 +174,24 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, logFi
 
 	for _, ruleType := range rule.Type {
 		for _, terminateAction := range actions {
+			var delErr error
 			if rule.Not {
-				err = ipt.Delete(rule.Table, chainName, "-m", "set", "!", "--match-set", setName, ruleType, "-j", terminateAction)
+				delErr = ipt.Delete(rule.Table, chainName, "-m", "set", "!", "--match-set", setName, ruleType, "-j", terminateAction)
 			} else {
-				err = ipt.Delete(rule.Table, chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
+				delErr = ipt.Delete(rule.Table, chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
 			}
-			if err != nil {
-				if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
-					return nil
-				} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
-					if clear {
-						logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
-					}
-					return nil
-				}
-				if err != nil {
-					return err
-				}
+			if delErr == nil {
+				continue
 			}
+			// Not found: this action/type was never added (or is already gone). Keep trying the rest.
+			if strings.Contains(delErr.Error(), "does a matching rule exist in that chain") ||
+				strings.Contains(delErr.Error(), "Set "+setName+" doesn't exist") {
+				if clear {
+					logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
+				}
+				continue
+			}
+			return delErr
 		}
 	}
 	logger.Log("Removed iptables rule", logFilePath, verbose)
@@ -477,53 +480,54 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
-	var rule models.Rule
+
+	// Each distinct (table, chain, parent) jump is removed once, after all sets are gone.
+	type jumpKey struct{ table, chain, parent string }
+	seen := map[jumpKey]bool{}
+	var jumps []jumpKey
+
 	for _, r := range inventory.IPSetRules {
 		setName := r.SetName
-		rule = models.Rule{
+		rule := models.Rule{
 			Policy: r.IPtables.Policy,
 			Insert: r.IPtables.Insert,
 			Type:   r.IPtables.Type,
+			Chain:  r.IPtables.Chain,
+			Table:  r.IPtables.Table,
+			Not:    r.IPtables.Not,
+			Parent: r.IPtables.Parent,
 		}
-		if r.IPtables.Policy != "" {
-			iptables = true
-		}
-		if rule.Table == "" {
-			rule.Table = "raw"
-		}
-		if rule.Chain == "" {
-			rule.Chain = "IPSET_FW"
-		}
+		applyRuleDefaults(&rule)
 
-		err := createDefaultChain(rule.Chain, rule.Table)
-		if err != nil {
-			return err
-		}
-		if iptables {
-			err := removeIptableRule(rule, setName, rule.Chain, "", verbose, true)
-			if err != nil {
+		useIptables := iptables || r.IPtables.Policy != ""
+		if useIptables {
+			if err := removeIptableRule(rule, setName, rule.Chain, "", verbose, true); err != nil {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
-		}
-		// Destroy set if it exists
-		err = ipset.Destroy(setName)
-		err = ipset.Destroy(setName + "-bak")
-		if err != nil {
-			if !strings.Contains(err.Error(), "The set with the given name does not exist") {
-				if err != nil {
-					return err
-				}
+			k := jumpKey{rule.Table, rule.Chain, rule.Parent}
+			if !seen[k] {
+				seen[k] = true
+				jumps = append(jumps, k)
 			}
 		}
+
+		// Destroy the set and its backup. Only "does not exist" is ignored.
+		if err := ipset.Destroy(setName); err != nil && !errors.Is(err, syscall.ENOENT) {
+			return err
+		}
+		if err := ipset.Destroy(setName + "-bak"); err != nil && !errors.Is(err, syscall.ENOENT) {
+			return err
+		}
 	}
-	err := removeDefaultChainIptableRule(rule.Chain, rule.Table, "", verbose, true)
-	if err != nil {
-		return err
-	}
-	err = removeDefaultChain(rule.Chain, rule.Table, "", verbose)
-	if err != nil {
-		return err
+
+	for _, k := range jumps {
+		if err := removeDefaultChainIptableRule(k.chain, k.table, k.parent, "", verbose, true); err != nil {
+			return err
+		}
+		if err := removeDefaultChain(k.chain, k.table, "", verbose); err != nil {
+			return err
+		}
 	}
 	return nil
 }
