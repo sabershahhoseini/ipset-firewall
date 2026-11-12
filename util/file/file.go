@@ -35,6 +35,7 @@ type Inventory struct {
 	Cache       CacheConfig  `yaml:"cache"`
 	Mirror      string       `yaml:"mirror"`
 	Offline     bool         `yaml:"offline"`
+	StateFile   string       `yaml:"stateFile"`
 	LogFilePath string       `yaml:"logFile"`
 }
 

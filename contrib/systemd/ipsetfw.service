@@ -1,0 +1,11 @@
+[Unit]
+Description=ipsetfw: update ipset block lists and firewall rules
+Documentation=https://github.com/sabershahhoseini/ipset-firewall
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root: ipset and iptables need it.
+ExecStart=/usr/local/bin/ipsetfw -config /etc/ipsetfw/ipsetfw.yml
+Nice=10

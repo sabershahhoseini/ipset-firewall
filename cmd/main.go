@@ -9,6 +9,7 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/models"
 	"github.com/sabershahhoseini/ipset-firewall/pkg/ipsetfw"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
+	"github.com/sabershahhoseini/ipset-firewall/util/lock"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
 	"github.com/sabershahhoseini/ipset-firewall/util/usermgmt"
 )
@@ -30,6 +31,8 @@ func main() {
 	list := flag.Bool("list", false, "List sets")
 	config := flag.String("config", "", "Use yaml config file")
 	plan := flag.Bool("plan", false, "With -config: show what would be applied, change nothing")
+	status := flag.Bool("status", false, "With -config: show the live state of each block")
+	verify := flag.Bool("verify", false, "With -config: check the live firewall matches the config; exit 1 on differences")
 	force := flag.Bool("force", false, "Ignore fresh cached lists and download again")
 	mirror := flag.String("mirror", "", "Directory of <code>.txt lists to use before any download")
 	offlineFlag := flag.Bool("offline", false, "Never touch the network; use the mirror and cache only")
@@ -50,6 +53,8 @@ Options:
 
 	-config		{PATH}			Read config from yaml file
 	-plan					with -config: show what would be applied, change nothing
+	-status					with -config: show the live state of each block
+	-verify					with -config: check the live firewall matches the config; exit 1 on differences
 	-force					ignore fresh cached lists and download again
 	-mirror		{DIR}			use <code>.txt files in DIR before any download
 	-offline				never touch the network; mirror and cache only
@@ -128,9 +133,15 @@ Check if IP exists in IR (Iran):
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, "", "")
 		checkerr.Fatal(err)
 		file.ExportToFile(*filePath, ipList, *verbose)
+	} else if *config != "" && *status {
+		checkerr.Fatal(ipsetfw.StatusConfig(*config, *verbose))
+	} else if *config != "" && *verify {
+		checkerr.Fatal(ipsetfw.VerifyConfig(*config, *verbose))
 	} else if *config != "" && *plan {
 		checkerr.Fatal(ipsetfw.PlanConfig(*config, *verbose))
 	} else if *config != "" && !*clear {
+		unlock := takeLock()
+		defer unlock()
 		checkerr.Fatal(ipsetfw.LoopConfigFile(*config, *iptables, *verbose))
 	} else if *list && *setName != "" {
 		ipsetfw.ListSet(*setName, *verbose)
@@ -139,6 +150,8 @@ Check if IP exists in IR (Iran):
 	} else if *rollback && *setName != "" {
 		ipsetfw.RollbackSet(*setName)
 	} else if *clear {
+		unlock := takeLock()
+		defer unlock()
 		checkerr.Fatal(ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose))
 	} else if *countryCode != "" && *setName != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
@@ -153,4 +166,17 @@ Check if IP exists in IR (Iran):
 		fmt.Fprintln(os.Stderr, "invalid or incomplete arguments, use -help")
 		os.Exit(1)
 	}
+}
+
+// lockPath is held while a config is applied or cleared, so timers and manual runs do not overlap.
+const lockPath = "/run/ipsetfw.lock"
+
+// takeLock acquires the run lock or exits with a message. The returned func releases it.
+func takeLock() func() {
+	f, err := lock.Acquire(lockPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	return func() { f.Close() }
 }

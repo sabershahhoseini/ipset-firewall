@@ -226,12 +226,15 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	}
 
 	var failed []string
+	applied := map[string]bool{}
 	for k, b := range inv.Block {
 		if b.IsPort() {
 			if err := applyPortBlock(b, allowRuleCount(inv.Allow)+k+1, mattermost, logFilePath, verbose); err != nil {
 				fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
 				failed = append(failed, b.Name)
+				continue
 			}
+			applied[b.SetName()] = true
 			continue
 		}
 		list, err := blockSources(b, verbose, logFilePath)
@@ -249,7 +252,12 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 		if err := IPsetfw(list, set, true, rule, mattermost, logFilePath, verbose); err != nil {
 			fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
 			failed = append(failed, b.Name)
+			continue
 		}
+		applied[b.SetName()] = true
+	}
+	if err := recordBlocks(inv, applied); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not write state file: "+err.Error())
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("%d block(s) not updated: %s", len(failed), strings.Join(failed, ", "))
@@ -287,7 +295,10 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 	if err := removeDefaultChainIptableRule(r.Chain, r.Table, r.Parent, "", verbose, true); err != nil {
 		return err
 	}
-	return removeDefaultChain(r.Chain, r.Table, "", verbose)
+	if err := removeDefaultChain(r.Chain, r.Table, "", verbose); err != nil {
+		return err
+	}
+	return forgetBlocks(inv)
 }
 
 // PlanConfig prints what applying a block/allow config would do. It changes no sets or iptables rules.

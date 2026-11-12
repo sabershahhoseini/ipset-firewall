@@ -154,6 +154,38 @@ offline: false              # true: never touch the network; mirror and cache on
 * For an air-gapped host, put the list files in the mirror directory and set `offline: true`. A list that is in neither the mirror nor the cache is an error.
 * Command-line equivalents: `-force`, `-mirror DIR`, `-offline`.
 
+### Running on a schedule (systemd)
+
+Files are in `contrib/systemd/`. As root:
+
+```sh
+install -m 0755 ipsetfw /usr/local/bin/ipsetfw
+install -d /etc/ipsetfw && install -m 0644 ipsetfw.yml /etc/ipsetfw/ipsetfw.yml
+ipsetfw -config /etc/ipsetfw/ipsetfw.yml -plan       # check first
+install -m 0644 contrib/systemd/ipsetfw.service contrib/systemd/ipsetfw.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ipsetfw.timer
+```
+
+* The timer runs every 6 hours, 2 minutes after boot, with a random delay of up to 10 minutes. `Persistent=true` runs a missed run after the host was off.
+* Each run uses the cache, so a list is downloaded at most once per `cache.maxAge`.
+* A lock at `/run/ipsetfw.lock` stops a timer run and a manual run from overlapping. The second one exits with an error.
+* Logs: `journalctl -u ipsetfw.service`. Next run: `systemctl list-timers ipsetfw.timer`.
+* Health check: `ipsetfw -config /etc/ipsetfw/ipsetfw.yml -verify` exits 1 if the live firewall has drifted from the config.
+
+### Checking the firewall
+
+With the block/allow format:
+
+```
+ipsetfw -config x.yml -status    # each block: set, live entries, type, rule, last update and source
+ipsetfw -config x.yml -verify    # compare live firewall with config; exit 1 on any difference
+```
+
+`-verify` makes no downloads. It checks the jump, the allow rules and their order, each set's type and entry count, each drop rule, and any drop rule for a block that is no longer in the config.
+
+The state file, `/var/lib/ipsetfw/state.json` by default (`stateFile:` in the config changes it), records each block's source and last update.
+
 ### Notes
 
 * Country lists come from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (CC0, updated daily) and fall back to [ipdeny.com](https://www.ipdeny.com/ipblocks/). Tor exit nodes come from the [Tor Project bulk exit list](https://check.torproject.org/torbulkexitlist) and fall back to [SecOps-Institute/Tor-IP-Addresses](https://github.com/SecOps-Institute/Tor-IP-Addresses). Sources are tried in order, and an empty result counts as a failure.
