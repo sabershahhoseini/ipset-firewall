@@ -11,4 +11,5 @@ type Rule struct {
 	Not    bool     `yaml:"not"`
 	Chain  string   `yaml:"chain"`
 	Table  string   `yaml:"table"`
+	Parent string   `yaml:"parent"`
 }

@@ -21,7 +21,7 @@ func main() {
 	iptablesPolicy := flag.String("policy", "", "iptables policy (accept or drop)")
 	filePath := flag.String("file", "", "Get list from file instead of github")
 	iptables := flag.Bool("iptables", false, "Add iptable rules")
-	chain := flag.String("chain", "INPUT", "iptables chain to add rules to")
+	chain := flag.String("chain", "", "iptables chain to add rules to (defaults to IPSET_FW)")
 	verbose := flag.Bool("v", false, "Verbose mode")
 	export := flag.Bool("export", false, "Export to file")
 	clear := flag.Bool("clear", false, "Clear everything")
@@ -47,7 +47,7 @@ Options:
 	-export					export to file. works with -file and -country
 
 	-iptables				setup iptables rules
-	-chain		{CHAIN}			iptables chain to add rules to. defaults to INPUT
+	-chain		{CHAIN}			iptables chain to add rules to. defaults to IPSET_FW (table raw)
 	-policy		{POLICY}		works with -iptables and sets default policy
 	
 	-rollback	{SETNAME}		rollback set with previous backup set
@@ -104,6 +104,7 @@ Check if IP exists in IR (Iran):
 	}
 	rule := models.Rule{
 		Policy: *iptablesPolicy,
+		Chain:  *chain,
 	}
 	if *export {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, "", "")
@@ -122,7 +123,7 @@ Check if IP exists in IR (Iran):
 	} else if *countryCode != "" && *setName != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)
-		checkerr.Fatal(ipsetfw.IPsetfw(ipList, set, *iptables, *chain, rule, file.Mattermost{}, "", *verbose))
+		checkerr.Fatal(ipsetfw.IPsetfw(ipList, set, *iptables, rule, file.Mattermost{}, "", *verbose))
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)

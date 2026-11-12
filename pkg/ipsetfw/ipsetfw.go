@@ -84,23 +84,52 @@ func createDefaultChain(chainName string, tableName string) error {
 	}
 	return nil
 }
-func addDefaultChainIptableRule(chainName string, tableName string, logFilePath string, verbose bool) error {
+
+// isBuiltinChain reports whether c is a chain that always exists and must never be created or deleted.
+func isBuiltinChain(c string) bool {
+	switch c {
+	case "INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING":
+		return true
+	}
+	return false
+}
+
+// applyRuleDefaults fills in the table, chain, insert position and parent chain of a rule.
+func applyRuleDefaults(r *models.Rule) {
+	if r.Table == "" {
+		r.Table = "raw"
+	}
+	if r.Chain == "" {
+		r.Chain = "IPSET_FW"
+	}
+	if r.Insert < 1 {
+		r.Insert = 1
+	}
+	if r.Parent == "" {
+		if r.Table == "raw" {
+			r.Parent = "PREROUTING"
+		} else {
+			r.Parent = "INPUT"
+		}
+	}
+}
+
+// addDefaultChainIptableRule adds a jump from parentChain to chainName. It does nothing for builtin chains.
+func addDefaultChainIptableRule(chainName string, tableName string, parentChain string, logFilePath string, verbose bool) error {
+	if isBuiltinChain(chainName) {
+		return nil
+	}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Adding iptables rule to for default chain "+chainName, logFilePath, verbose)
-	if chainName != "INPUT" {
-		err = ipt.InsertUnique(tableName, "INPUT", 1, "-j", chainName)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	logger.Log("Adding iptables rule to jump from "+parentChain+" to chain "+chainName, logFilePath, verbose)
+	return ipt.InsertUnique(tableName, parentChain, 1, "-j", chainName)
 }
 
-func addIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool) error {
+// addIptableRule adds the set match rule to rule.Chain in rule.Table.
+func addIptableRule(rule models.Rule, setName string, logFilePath string, verbose bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
@@ -114,14 +143,12 @@ func addIptableRule(rule models.Rule, setName string, chainName string, logFileP
 	for _, ruleType := range rule.Type {
 
 		if rule.Not {
-			err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "!", "--match-set", setName, ruleType, "-j", rulePolicy)
+			err = ipt.InsertUnique(rule.Table, rule.Chain, rule.Insert, "-m", "set", "!", "--match-set", setName, ruleType, "-j", rulePolicy)
 		} else {
-			err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
+			err = ipt.InsertUnique(rule.Table, rule.Chain, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
 		}
-		logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
-		// err = ipt.InsertUnique(rule.Table, chainName, rule.Insert)
+		logger.Log("Adding iptables rule to chain "+rule.Chain+" and set "+setName, logFilePath, verbose)
 		if err != nil {
-			fmt.Println(err)
 			return err
 		}
 	}
@@ -261,7 +288,7 @@ func ListSet(setName string, verbose bool) {
 // library cannot set a different value on create, so larger pools are refused.
 const maxSetEntries = 65536
 
-func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName string,
+func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	setName := setModel.SetName
@@ -269,12 +296,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName stri
 	tmpSetName := setName + "-tmp"
 	backupSetName := setName + "-bak"
 
-	if rule.Table == "" {
-		rule.Table = "raw"
-	}
-	if rule.Chain == "" {
-		rule.Chain = "IPSET_FW"
-	}
+	applyRuleDefaults(&rule)
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -305,8 +327,10 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName stri
 			fmt.Errorf("%d entries exceeds ipset limit of %d", len(ipListMerged), maxSetEntries))
 	}
 
-	if err := createDefaultChain(rule.Chain, rule.Table); err != nil {
-		return fail("could not create chain "+rule.Chain, err)
+	if iptables && !isBuiltinChain(rule.Chain) {
+		if err := createDefaultChain(rule.Chain, rule.Table); err != nil {
+			return fail("could not create chain "+rule.Chain, err)
+		}
 	}
 
 	// Remove a temp set left behind by an earlier failed run.
@@ -370,8 +394,11 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName stri
 		return fail("set "+setName+" was updated but temp set "+tmpSetName+" could not be removed", err)
 	}
 	if iptables {
-		if err := addIptableRule(rule, setName, chainName, logFilePath, verbose); err != nil {
-			return fail("could not add iptables rule for set "+setName+" - chain "+chainName, err)
+		if err := addDefaultChainIptableRule(rule.Chain, rule.Table, rule.Parent, logFilePath, verbose); err != nil {
+			return fail("could not add jump from "+rule.Parent+" to chain "+rule.Chain, err)
+		}
+		if err := addIptableRule(rule, setName, logFilePath, verbose); err != nil {
+			return fail("could not add iptables rule for set "+setName+" - chain "+rule.Chain, err)
 		}
 	}
 
@@ -406,6 +433,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			Insert: r.IPtables.Insert,
 			Type:   r.IPtables.Type,
 			Chain:  r.IPtables.Chain,
+			Parent: r.IPtables.Parent,
 			Table:  r.IPtables.Table,
 			Not:    r.IPtables.Not,
 		}
@@ -428,7 +456,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			if failed {
 				continue
 			}
-			if err := IPsetfw(ipListConcatenated, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose); err != nil {
+			if err := IPsetfw(ipListConcatenated, set, iptables, rule, mattermost, logFilePath, verbose); err != nil {
 				fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
 			}
 		} else {
@@ -438,7 +466,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 				continue
 			}
 			ipList := includeExtraIPs(fetched, r.ExtraIPs)
-			if err := IPsetfw(ipList, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose); err != nil {
+			if err := IPsetfw(ipList, set, iptables, rule, mattermost, logFilePath, verbose); err != nil {
 				fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
 			}
 		}
