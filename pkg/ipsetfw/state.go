@@ -101,7 +101,7 @@ func recordBlocks(inv file.Inventory, applied map[string]bool) error {
 		return err
 	}
 	keep := map[string]bool{}
-	for _, l := range listsOf(inv) {
+	for _, l := range allListsOf(inv) {
 		keep[l.setName()] = true
 	}
 	for name := range st.Blocks {
@@ -110,7 +110,7 @@ func recordBlocks(inv file.Inventory, applied map[string]bool) error {
 		}
 	}
 	now := time.Now().UTC()
-	for _, l := range listsOf(inv) {
+	for _, l := range allListsOf(inv) {
 		if !applied[l.setName()] {
 			continue
 		}
@@ -126,7 +126,7 @@ func forgetBlocks(inv file.Inventory) error {
 	if err != nil {
 		return err
 	}
-	for _, l := range listsOf(inv) {
+	for _, l := range allListsOf(inv) {
 		delete(st.Blocks, l.setName())
 	}
 	return saveState(path, st)

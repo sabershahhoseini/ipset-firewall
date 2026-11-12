@@ -3,6 +3,7 @@ package ipsetfw
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"syscall"
@@ -14,12 +15,13 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
+	"github.com/sabershahhoseini/ipset-firewall/util/sshclients"
 	"github.com/sabershahhoseini/ipset-firewall/util/usermgmt"
 )
 
 // newFormat reports whether the config uses block/allow instead of rules.
 func newFormat(inv file.Inventory) bool {
-	return len(inv.Block) > 0 || len(inv.Allow) > 0
+	return len(inv.Block) > 0 || len(inv.Allow) > 0 || len(inv.Only) > 0
 }
 
 // baseRule is where every entry lives: table raw, chain IPSET_FW, jump from PREROUTING.
@@ -268,6 +270,9 @@ func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFi
 		return fail("could not update set "+name, err)
 	}
 	for _, args := range l.rules() {
+		if l.kind == kindOnly {
+			break // the allow-only chain is built as a whole by applyOnly
+		}
 		if l.kind == kindAllow {
 			err = ipt.InsertUnique(r.Table, r.Chain, 1, args...)
 		} else {
@@ -311,6 +316,9 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	if err != nil {
 		return err
 	}
+	if err := onlyPrecheck(ipt, inv); err != nil {
+		return err
+	}
 	if err := createDefaultChain(r.Chain, r.Table); err != nil {
 		return err
 	}
@@ -338,6 +346,28 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 			fmt.Fprintln(os.Stderr, "warning: could not write state file: "+err.Error())
 		}
 		return fmt.Errorf("%d list(s) not updated: %s; block lists left unchanged", len(failed), strings.Join(failed, ", "))
+	}
+
+	for _, l := range onlyListsOf(inv) {
+		if err := applyList(ipt, l, mattermost, logFilePath, verbose); err != nil {
+			fmt.Fprintln(os.Stderr, "only "+l.entry.Name+" not updated: "+err.Error())
+			failed = append(failed, "only "+l.entry.Name)
+			continue
+		}
+		applied[l.setName()] = true
+	}
+	// Like allow lists: allow-only and the block lists are only changed when every only list is in place.
+	if len(failed) > 0 {
+		if err := recordBlocks(inv, applied); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not write state file: "+err.Error())
+		}
+		return fmt.Errorf("%d list(s) not updated: %s; allow-only and block lists left unchanged", len(failed), strings.Join(failed, ", "))
+	}
+	if err := applyOnly(ipt, inv); err != nil {
+		if rerr := recordBlocks(inv, applied); rerr != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not write state file: "+rerr.Error())
+		}
+		return fmt.Errorf("%w; block lists left unchanged", err)
 	}
 
 	keep := map[string]bool{}
@@ -378,6 +408,9 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 	if err != nil {
 		return err
 	}
+	if err := removeOnly(ipt); err != nil {
+		return fmt.Errorf("removing allow-only: %w", err)
+	}
 	// IPSET_FW belongs to this tool, so clearing the whole chain is safe. It also drops every
 	// reference to the block sets, so they can be destroyed.
 	if exists, err := ipt.ChainExists(r.Table, r.Chain); err != nil {
@@ -387,7 +420,7 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 			return fmt.Errorf("clearing %s: %w", r.Chain, err)
 		}
 	}
-	for _, l := range listsOf(inv) {
+	for _, l := range allListsOf(inv) {
 		if err := destroySet(l.setName()); err != nil {
 			return err
 		}
@@ -430,7 +463,8 @@ func PlanConfig(path string, verbose bool) error {
 		fmt.Printf("  allow   %-18s ACCEPT as source and destination\n", a)
 	}
 	var failed []string
-	for _, l := range listsOf(inv) {
+	nets := map[string][]*net.IPNet{}
+	for _, l := range allListsOf(inv) {
 		b := l.entry
 		list, err := blockSources(b, verbose, inv.LogFilePath)
 		if err != nil {
@@ -438,8 +472,13 @@ func PlanConfig(path string, verbose bool) error {
 			failed = append(failed, l.kind+" "+b.Name)
 			continue
 		}
-		nets := netutils.MergeIPsToCIDRs(list)
-		entries := len(blockEntries(b, nets))
+		merged := netutils.MergeIPsToCIDRs(list)
+		for _, m := range merged {
+			if _, n, err := net.ParseCIDR(m); err == nil {
+				nets[l.setName()] = append(nets[l.setName()], n)
+			}
+		}
+		entries := len(blockEntries(b, merged))
 		dirs := strings.Join(l.directions(), "+")
 		detail := ""
 		if b.IsPort() {
@@ -449,6 +488,25 @@ func PlanConfig(path string, verbose bool) error {
 			l.kind, b.Name, dirs, strings.ToLower(l.target()), entries, l.setName(), detail)
 		if l.kind == kindBlock && b.DirectionOrDefault() == "dst" {
 			fmt.Printf("          warning: dst matches packets addressed TO these networks; make sure this host is not in them\n")
+		}
+	}
+	if len(inv.Only) > 0 {
+		fmt.Printf("allow-only (table %s, from %s): inbound connections not allowed by allow or only are %s\n",
+			onlyTable, onlyParent, onlyActionPast(inv))
+		fmt.Println("          warning: anything not listed in allow or only can no longer connect to this host")
+		inPlan := func(l list, c sshclients.Client) bool {
+			for _, n := range nets[l.setName()] {
+				if n.Contains(c.IP) {
+					return true
+				}
+			}
+			return false
+		}
+		if bad := cutOffClients(inv, inPlan); len(bad) > 0 {
+			fmt.Printf("          PROBLEM: SSH client %s would be cut off; apply will refuse\n", describeClients(bad))
+			failed = append(failed, "allow-only")
+		} else if cs := sshclients.Find(); len(cs) > 0 {
+			fmt.Printf("          ok: current SSH client %s stays allowed\n", describeClients(cs))
 		}
 	}
 	fmt.Println("nothing applied (-plan)")

@@ -144,6 +144,29 @@ block:
 * A list name can't be used in both `allow` and `block`, and the name `addresses` is reserved.
 * A country code must be two letters, `tor`, or have a `<code>.txt` file in the mirror. Anything else is refused before the firewall is changed.
 
+### Allow-only (only listed sources may connect)
+
+```yaml
+only:                      # inbound: only these may open connections to this host
+  - ir
+  - name: office
+    ips: [198.51.100.0/24]
+onlyAction: drop           # drop (default) or reject
+allow:
+  - 203.0.113.42           # admin IP: always allowed, even when not in only
+```
+
+Everything not in `allow` or `only` can no longer connect to this host. Run `-plan` first.
+
+* It lives in the `filter` table, in chain `IPSET_ONLY` jumped from `INPUT`, so it affects inbound traffic to this host only. Outbound connections and their replies keep working, and traffic forwarded through the host is not affected.
+* Chain order: loopback, established and related traffic, `allow` addresses and lists, `only` lists, then `onlyAction`.
+* `reject` refuses TCP with a reset and other protocols with an ICMP error. `drop` is silent.
+* **SSH guard:** a run is refused if a current SSH client would be cut off. Clients are found from established connections to port 22 and from `SSH_CLIENT`. `-plan` reports this too. If sshd runs on another port, check `SSH_CLIENT` is kept (it is not, by default, under `sudo`).
+* **First install must be confirmed:** you are asked to open a new connection and type `yes` within 60 seconds (`-only-timeout` changes this). Without an answer, allow-only is removed again. A first install without a terminal is refused unless `-unattended` is given. Do the first install by hand before enabling the systemd timer. Later runs update the lists without asking.
+* Each update builds the new chain in full and points `INPUT` at it before removing the old one, so there is no moment without it.
+* If an `allow` or `only` list fails to update, allow-only and the block lists are left as they were.
+* Removing `only` from the config turns allow-only off on the next run. `-clear` removes it as well.
+
 ### Port-scoped blocks
 
 Add `ports` to limit a block to some destination ports. The set is `hash:net,port`.

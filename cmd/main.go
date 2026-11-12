@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/models"
@@ -36,11 +37,15 @@ func main() {
 	force := flag.Bool("force", false, "Ignore fresh cached lists and download again")
 	mirror := flag.String("mirror", "", "Directory of <code>.txt lists to use before any download")
 	offlineFlag := flag.Bool("offline", false, "Never touch the network; use the mirror and cache only")
+	unattended := flag.Bool("unattended", false, "Install allow-only without the interactive confirmation (still checks SSH clients)")
+	onlyTimeout := flag.Duration("only-timeout", 60*time.Second, "How long a first allow-only install waits for confirmation")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
 	ipsetfw.ForceRefresh = *force
 	ipsetfw.MirrorFlag = *mirror
 	ipsetfw.OfflineFlag = *offlineFlag
+	ipsetfw.OnlyUnattended = *unattended
+	ipsetfw.OnlyTimeout = *onlyTimeout
 	netutils.SetCacheOptions(netutils.CacheOptions{Dir: netutils.DefaultCacheDir, MaxAge: netutils.DefaultCacheMaxAge, Force: *force})
 	netutils.SetMirror(*mirror, *offlineFlag)
 
@@ -58,6 +63,8 @@ Options:
 	-force					ignore fresh cached lists and download again
 	-mirror		{DIR}			use <code>.txt files in DIR before any download
 	-offline				never touch the network; mirror and cache only
+	-unattended				install allow-only without the interactive confirmation
+	-only-timeout	{DURATION}		how long a first allow-only install waits for "yes" (default 60s)
 	-country	{CODE}			set country code. is not case sensitive.
 	-set		{NAME}			name of ipset set
 	-check		{IP}			check if IP exists in specific country IP pool

@@ -166,3 +166,29 @@ func TestReservedAddressesName(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestOnlyParsesAndValidates(t *testing.T) {
+	inv := parse(t, "only:\n  - ir\n  - 203.0.113.42\n  - name: office\n    ips: [198.51.100.0/24]\nonlyAction: reject\n")
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	ol := inv.OnlyLists()
+	if len(ol) != 3 || ol[0].SetNameFor("only") != "ir-only" || ol[2].SetNameFor("only") != "addresses-only" {
+		t.Errorf("OnlyLists = %+v", ol)
+	}
+	if inv.OnlyActionOrDefault() != "reject" {
+		t.Errorf("action = %q", inv.OnlyActionOrDefault())
+	}
+	for doc, want := range map[string]string{
+		"only: [ir]\nonlyAction: deny\n":   "drop or reject",
+		"onlyAction: drop\nblock: [tor]\n": "only is empty",
+		"only: [ir]\nblock: [ir]\n":        "both only and block",
+	} {
+		if err := parse(t, doc).Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: error = %v, want %q", doc, err, want)
+		}
+	}
+	if parse(t, "only: [ir]\n").OnlyActionOrDefault() != "drop" {
+		t.Error("default action is not drop")
+	}
+}

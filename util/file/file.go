@@ -31,6 +31,8 @@ type Inventory struct {
 	IPSetRules  []Rule       `yaml:"rules"`
 	Allow       []BlockEntry `yaml:"allow"`
 	Block       []BlockEntry `yaml:"block"`
+	Only        []BlockEntry `yaml:"only"`
+	OnlyAction  string       `yaml:"onlyAction"`
 	Mattermost  Mattermost   `yaml:"mattermost"`
 	Cache       CacheConfig  `yaml:"cache"`
 	Mirror      string       `yaml:"mirror"`

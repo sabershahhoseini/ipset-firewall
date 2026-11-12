@@ -21,9 +21,8 @@ func readBlockAllowConfig(path string) (file.Inventory, error) {
 
 // rulesPresent reports whether every rule of a list is in the chain.
 func rulesPresent(ipt *iptables.IPTables, l list) bool {
-	r := baseRule()
 	for _, args := range l.rules() {
-		if ok, err := ipt.Exists(r.Table, r.Chain, args...); err != nil || !ok {
+		if ok, err := ipt.Exists(l.table(), l.chain(), args...); err != nil || !ok {
 			return false
 		}
 	}
@@ -52,7 +51,14 @@ func StatusConfig(path string, verbose bool) error {
 		return err
 	}
 	fmt.Printf("chain %s (table %s, from %s): %d allowed-address rule(s)\n", r.Chain, r.Table, r.Parent, len(allows))
-	for _, l := range listsOf(inv) {
+	if len(inv.Only) > 0 {
+		state := "NOT installed"
+		if installed, err := onlyInstalled(ipt); err == nil && installed {
+			state = "active, others " + onlyActionPast(inv)
+		}
+		fmt.Printf("allow-only %s (table %s, from %s): %s\n", onlyChain, onlyTable, onlyParent, state)
+	}
+	for _, l := range allListsOf(inv) {
 		name := l.setName()
 		live := "set missing"
 		if info, err := ipset.List(name); err == nil {
@@ -148,7 +154,7 @@ func VerifyConfig(path string, verbose bool) error {
 
 	// Lists: set type and rules.
 	keep := map[string]bool{}
-	for _, l := range listsOf(inv) {
+	for _, l := range allListsOf(inv) {
 		name := l.setName()
 		keep[name] = true
 		info, err := ipset.List(name)
@@ -160,12 +166,49 @@ func VerifyConfig(path string, verbose bool) error {
 			ok(fmt.Sprintf("%s set %s (%s, %d entries)", l.kind, name, info.TypeName, info.NumEntries))
 		}
 		for _, args := range l.rules() {
-			if exists, err := ipt.Exists(r.Table, r.Chain, args...); err != nil || !exists {
+			if exists, err := ipt.Exists(l.table(), l.chain(), args...); err != nil || !exists {
 				bad(l.kind + " rule missing: " + strings.Join(args, " "))
 			} else {
 				ok(l.kind + " rule " + strings.Join(args, " "))
 			}
 		}
+	}
+
+	// Allow-only: installed exactly as the config describes it, or not at all.
+	if len(inv.Only) > 0 {
+		if installed, err := onlyInstalled(ipt); err != nil || !installed {
+			bad(fmt.Sprintf("allow-only is in the config but %s does not jump to %s", onlyParent, onlyChain))
+		} else {
+			ok(fmt.Sprintf("jump from %s to %s", onlyParent, onlyChain))
+			want, err := expectedOnlyLines(inv)
+			if err != nil {
+				return err
+			}
+			got, err := ipt.List(onlyTable, onlyChain)
+			if err != nil {
+				return err
+			}
+			if strings.Join(got, "\n") == strings.Join(want, "\n") {
+				ok(fmt.Sprintf("allow-only chain matches the config (%d rules)", len(want)-1))
+			} else {
+				bad("allow-only chain differs from the config")
+				for i := 0; i < len(want) || i < len(got); i++ {
+					var w, g string
+					if i < len(want) {
+						w = want[i]
+					}
+					if i < len(got) {
+						g = got[i]
+					}
+					if w != g {
+						fmt.Printf("           want: %s\n           have: %s\n", w, g)
+						break
+					}
+				}
+			}
+		}
+	} else if exists, err := ipt.ChainExists(onlyTable, onlyChain); err == nil && exists {
+		bad("allow-only chain " + onlyChain + " exists but the config has no only")
 	}
 
 	// Rules for allow or block sets that are no longer in the config.

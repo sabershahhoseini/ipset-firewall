@@ -112,9 +112,27 @@ func (b *BlockEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // BlockLists returns the block lists, plus one list named "addresses" holding every bare
 // address written in block, if there are any.
 func (inv Inventory) BlockLists() []BlockEntry {
+	return listsWithAddresses(inv.Block)
+}
+
+// OnlyLists returns the allow-only lists, plus one list named "addresses" holding every bare
+// address written in only, if there are any.
+func (inv Inventory) OnlyLists() []BlockEntry {
+	return listsWithAddresses(inv.Only)
+}
+
+// OnlyActionOrDefault is the action for inbound connections not allowed by only: drop unless set.
+func (inv Inventory) OnlyActionOrDefault() string {
+	if inv.OnlyAction == "" {
+		return "drop"
+	}
+	return inv.OnlyAction
+}
+
+func listsWithAddresses(entries []BlockEntry) []BlockEntry {
 	var lists []BlockEntry
 	var addrs []string
-	for _, b := range inv.Block {
+	for _, b := range entries {
 		if b.IsAddress() {
 			addrs = append(addrs, b.Address)
 			continue
@@ -158,8 +176,16 @@ func (inv Inventory) Validate() error {
 			return fmt.Errorf("cache.maxAge: %w", err)
 		}
 	}
-	if (len(inv.Block) > 0 || len(inv.Allow) > 0) && len(inv.IPSetRules) > 0 {
-		return fmt.Errorf("config mixes 'rules' with 'block'/'allow'; use one format")
+	if (len(inv.Block) > 0 || len(inv.Allow) > 0 || len(inv.Only) > 0) && len(inv.IPSetRules) > 0 {
+		return fmt.Errorf("config mixes 'rules' with 'block'/'allow'/'only'; use one format")
+	}
+	switch inv.OnlyAction {
+	case "", "drop", "reject":
+	default:
+		return fmt.Errorf("onlyAction must be drop or reject, got %q", inv.OnlyAction)
+	}
+	if inv.OnlyAction != "" && len(inv.Only) == 0 {
+		return fmt.Errorf("onlyAction is set but only is empty")
 	}
 	allowNames := map[string]bool{}
 	seen := map[string]bool{}
@@ -174,6 +200,22 @@ func (inv Inventory) Validate() error {
 			return err
 		}
 		allowNames[a.Name] = true
+	}
+	onlyNames := map[string]bool{}
+	for _, o := range inv.Only {
+		if o.IsAddress() {
+			if err := checkAddress(o.Address); err != nil {
+				return fmt.Errorf("only: %w", err)
+			}
+			continue
+		}
+		if o.Name == AddressesName {
+			return fmt.Errorf("only: the name %q is reserved for bare addresses", AddressesName)
+		}
+		if err := checkList(o, "only", seen); err != nil {
+			return err
+		}
+		onlyNames[o.Name] = true
 	}
 	for _, b := range inv.Block {
 		if b.IsAddress() {
@@ -190,6 +232,9 @@ func (inv Inventory) Validate() error {
 		}
 		if allowNames[b.Name] {
 			return fmt.Errorf("list %q is in both allow and block", b.Name)
+		}
+		if onlyNames[b.Name] {
+			return fmt.Errorf("list %q is in both only and block", b.Name)
 		}
 	}
 	return nil
