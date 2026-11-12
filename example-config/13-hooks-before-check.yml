@@ -1,0 +1,17 @@
+# Stop before anything changes if the mirror directory is missing.
+# /usr/bin/test is a system program, so it passes the root-owned check.
+# Lists come only from the mirror, so the run never touches the network.
+logFile: /var/log/ipsetfw.log
+mirror: /srv/ipsetfw/mirror
+offline: true
+cache:
+  dir: "off"
+
+hooks:
+  before:
+    - run: [/usr/bin/test, -d, /srv/ipsetfw/mirror]
+      onFailure: abort         # missing directory: the run stops, nothing changes
+
+block:
+  - ir
+  - tor

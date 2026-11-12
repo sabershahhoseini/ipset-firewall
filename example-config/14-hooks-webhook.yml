@@ -1,0 +1,16 @@
+# Send the run report to a webhook after each change, and to another when a run fails.
+# Replace the URLs with your own. ipsetfw shows only the host in messages, never the path,
+# because the path often holds a token.
+logFile: /var/log/ipsetfw.log
+
+hooks:
+  timeout: 10s
+  after:
+    - webhook: https://hooks.example.com/services/REPLACE_ME
+      when: changed            # only when a list really changed
+      retries: 3               # retry after a failure: waits 1s, 2s, 4s
+  onError:
+    - webhook: https://alerts.example.com/ipsetfw/REPLACE_ME
+
+block:
+  - ir

@@ -1,0 +1,14 @@
+# Block Iran. After each change, check that the site still answers.
+# If it stops answering, put the previous lists back.
+# Install the script first: see docs/hooks.md (root-owned, not writable by others).
+logFile: /var/log/ipsetfw.log
+
+hooks:
+  timeout: 30s
+  after:
+    - run: [/etc/ipsetfw/hooks/health-check.sh, http://127.0.0.1/health]
+      when: changed            # only when a list really changed
+      onFailure: rollback      # put the previous lists back if the site is down
+
+block:
+  - ir

@@ -1,0 +1,10 @@
+# Block Tor and keep a copy of every run's report, one file per run.
+# Install the script first: see docs/hooks.md.
+logFile: /var/log/ipsetfw.log
+
+hooks:
+  after:
+    - run: [/etc/ipsetfw/hooks/save-to-file.sh, /var/log/ipsetfw/reports]
+
+block:
+  - tor
