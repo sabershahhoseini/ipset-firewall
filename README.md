@@ -1,6 +1,8 @@
 # ipset-firewall
 
-Block or allow large IP pools, such as whole countries, using [ipset](https://ipset.netfilter.org/). You describe what to block in a YAML file, and ipsetfw keeps the firewall in line with it.
+Block or allow IP large IP pools of countries using ipset.
+
+Why it exists and how it works: [introduction](docs/introduction.md).
 
 ## Quick start
 
@@ -14,6 +16,7 @@ Start from the closest of the [example configs](example-config/), then adjust it
 
 ## Docs
 
+- [Introduction](docs/introduction.md): why ipset, and how ipsetfw works
 - [Configuration](docs/configuration.md): the file, the entry forms, and the rules it must follow
 - [Block and allow](docs/block-and-allow.md): blocking, allow lists and port-scoped blocks
 - [Allow-only](docs/allow-only.md): only listed sources may connect
