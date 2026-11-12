@@ -299,6 +299,23 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	if err := inv.Validate(); err != nil {
 		return err
 	}
+	runErr := applyBlockAllowRun(inv, verbose)
+	if inv.Persist {
+		if ipt, err := iptables.New(); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not save snapshot: "+err.Error())
+		} else if err := saveSnapshot(ipt, inv); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not save snapshot: "+err.Error())
+		}
+	}
+	return runErr
+}
+
+// applyBlockAllowRun does the work of applyBlockAllow.
+func applyBlockAllowRun(inv file.Inventory, verbose bool) error {
+	usermgmt.ExitIfNotRoot()
+	if err := inv.Validate(); err != nil {
+		return err
+	}
 	if err := configureSources(inv, false); err != nil {
 		return err
 	}
@@ -432,6 +449,9 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 		return err
 	}
 	if err := removeDefaultChain(r.Chain, r.Table, "", verbose); err != nil {
+		return err
+	}
+	if err := removeSnapshot(inv); err != nil {
 		return err
 	}
 	return forgetBlocks(inv)

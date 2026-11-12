@@ -230,9 +230,10 @@ Files are in `contrib/systemd/`. As root:
 install -m 0755 ipsetfw /usr/local/bin/ipsetfw
 install -d /etc/ipsetfw && install -m 0644 ipsetfw.yml /etc/ipsetfw/ipsetfw.yml
 ipsetfw -config /etc/ipsetfw/ipsetfw.yml -plan       # check first
-install -m 0644 contrib/systemd/ipsetfw.service contrib/systemd/ipsetfw.timer /etc/systemd/system/
+install -m 0644 contrib/systemd/ipsetfw.service contrib/systemd/ipsetfw.timer contrib/systemd/ipsetfw-restore.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now ipsetfw.timer
+systemctl enable ipsetfw-restore.service      # with persist: true, restores the firewall at boot
 ```
 
 * The timer runs every 6 hours, 2 minutes after boot, with a random delay of up to 10 minutes. `Persistent=true` runs a missed run after the host was off.
@@ -240,6 +241,14 @@ systemctl enable --now ipsetfw.timer
 * A lock at `/run/ipsetfw.lock` is held by every command that changes sets or rules (apply, clear, `-country -set`, `-rollback`), so a timer run and a manual run never overlap. The second one exits with an error.
 * Logs: `journalctl -u ipsetfw.service`. Next run: `systemctl list-timers ipsetfw.timer`.
 * Health check: `ipsetfw -config /etc/ipsetfw/ipsetfw.yml -verify` exits 1 if the live firewall has drifted from the config.
+
+### Surviving a reboot
+
+ipset sets and iptables rules are lost at reboot. With `persist: true`, every apply saves a snapshot of this tool's sets and of its two chains (`IPSET_FW`, `IPSET_ONLY`) with their jumps. The snapshot goes to `persistDir`, default `/var/lib/ipsetfw/restore`, with mode 600. `ipsetfw -restore` puts it back without any network. `ipsetfw-restore.service` runs it at boot, before the network starts.
+
+* Only this tool's sets and chains are saved and restored. Other software's rules, such as Docker or fail2ban, are not touched.
+* `-clear` deletes the snapshot, so a reboot does not bring back a cleared firewall.
+* The next timer run updates the restored lists as usual.
 
 ### Updates and rollback
 

@@ -5,6 +5,7 @@
 #   ipsetfw -config full-config.yml -status    live state of every list
 #   ipsetfw -config full-config.yml -verify    compare firewall with this file; exit 1 on differences
 #   ipsetfw -config full-config.yml -clear     remove everything this file created
+#   ipsetfw -config full-config.yml -restore   put back the last saved sets and rules (boot)
 #   extra flags: -force (ignore cache), -offline, -mirror DIR, -unattended, -only-timeout 60s, -v
 #
 # Every list entry (in allow, only and block) can be written as:
@@ -21,6 +22,8 @@
 
 logFile: /var/log/ipsetfw.log           # "" = no log file
 stateFile: /var/lib/ipsetfw/state.json  # last update of each list, used by -status
+persist: true                           # save sets and rules after each run; -restore puts them back at boot
+persistDir: /var/lib/ipsetfw/restore
 
 # Notifications on success and failure. Failures to send only print a warning.
 #mattermost:
