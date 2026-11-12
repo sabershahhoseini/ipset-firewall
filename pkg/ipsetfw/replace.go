@@ -10,22 +10,30 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 )
 
-// replaceSet makes setName hold exactly entries, of type typ. The entries are built in a
-// temp set, checked, and only then swapped in. The previous contents stay in <name>-bak.
-// On any error the live set is left as it was and the temp set is removed.
-func replaceSet(setName, typ string, entries []ipset.Entry, logFilePath string, verbose bool) error {
+// replaceSet makes setName hold exactly entries, of type typ.
+//
+// The entries are built and checked in <name>-tmp. Then a single operation puts them live:
+//   - first time (no live set): the temp set is renamed to setName; there is no backup yet;
+//   - later: the temp set is swapped with the live set, and the old contents become <name>-bak.
+//
+// The live set is changed only by that one operation, so an error before it leaves the live set as
+// it was. If the live set exists with another type, onTypeChange is called first to remove the
+// rules that use it; the old set and its backup are then destroyed and the new set takes its place.
+// With onTypeChange nil, a type change is refused.
+func replaceSet(setName, typ string, entries []ipset.Entry, onTypeChange func() error, logFilePath string, verbose bool) error {
 	tmpSetName := setName + "-tmp"
 	backupSetName := setName + "-bak"
 	maxElem := ipsetcli.MaxElemFor(len(entries))
+	logEntries := verbose || logFilePath != ""
 
-	// abort removes the temp set and returns the error. The live set is never touched on abort.
+	// abort removes the temp set and returns the error. The live set has not been touched.
 	abort := func(msg string, err error) error {
 		_ = ipset.Destroy(tmpSetName)
 		return fmt.Errorf("%s: %w", msg, err)
 	}
 
 	// Remove a temp set left behind by an earlier failed run.
-	if err := ipset.Destroy(tmpSetName); err != nil && !errors.Is(err, syscall.ENOENT) {
+	if err := destroySet(tmpSetName); err != nil {
 		return fmt.Errorf("could not remove stale temp set %s: %w", tmpSetName, err)
 	}
 
@@ -35,7 +43,9 @@ func replaceSet(setName, typ string, entries []ipset.Entry, logFilePath string, 
 	}
 	for i := range entries {
 		e := entries[i]
-		logger.Log("Adding "+describeEntry(e), logFilePath, verbose)
+		if logEntries {
+			logger.Log("Adding "+describeEntry(e), logFilePath, verbose)
+		}
 		if err := ipset.Add(tmpSetName, &e); err != nil {
 			return abort("could not add "+describeEntry(e)+" to "+tmpSetName, err)
 		}
@@ -49,45 +59,47 @@ func replaceSet(setName, typ string, entries []ipset.Entry, logFilePath string, 
 			fmt.Errorf("got %d, want %d", tmpInfo.NumEntries, len(entries)))
 	}
 
-	// An existing live set of another type cannot be swapped with the new one.
-	if live, err := ipset.List(setName); err == nil && live.TypeName != typ {
-		return abort("set "+setName+" already exists as "+live.TypeName+"; rename the block or run: ipset destroy "+setName,
-			fmt.Errorf("cannot replace it with %s", typ))
+	live, err := ipset.List(setName)
+	if err != nil && !errors.Is(err, syscall.ENOENT) {
+		return abort("could not inspect set "+setName, err)
 	}
-	if err := ipsetcli.CreateSet(setName, typ, maxElem, true); err != nil {
-		return abort("could not create set "+setName, err)
+	exists := err == nil
+
+	if exists && live.TypeName != typ {
+		if onTypeChange == nil {
+			return abort("set "+setName+" already exists as "+live.TypeName+"; rename it or remove it with: ipset destroy "+setName,
+				fmt.Errorf("cannot replace it with %s", typ))
+		}
+		fmt.Printf("Set %s changes type from %s to %s; replacing it\n", setName, live.TypeName, typ)
+		if err := onTypeChange(); err != nil {
+			return abort("could not remove the rules that use "+setName, err)
+		}
+		if err := ipset.Destroy(setName); err != nil {
+			return abort("could not remove old set "+setName, err)
+		}
+		exists = false
 	}
 
-	_, listErr := ipset.List(backupSetName)
-	if listErr != nil && !errors.Is(listErr, syscall.ENOENT) {
-		return abort("could not inspect backup set "+backupSetName, listErr)
-	}
-	if listErr != nil {
-		// First run: create the backup filled with the new entries, then swap the temp set in.
-		if err := ipsetcli.CreateSet(backupSetName, typ, maxElem, false); err != nil {
-			return abort("could not create backup set "+backupSetName, err)
+	if !exists {
+		// A backup without a live set is from an older set of this name; it cannot be rolled back to.
+		if err := destroySet(backupSetName); err != nil {
+			return abort("could not remove old backup "+backupSetName, err)
 		}
-		for i := range entries {
-			e := entries[i]
-			if err := ipset.Add(backupSetName, &e); err != nil {
-				_ = ipset.Destroy(backupSetName)
-				return abort("could not fill backup set "+backupSetName, err)
-			}
+		if err := ipset.Rename(tmpSetName, setName); err != nil {
+			return abort("could not rename "+tmpSetName+" to "+setName, err)
 		}
-		if err := ipset.Swap(tmpSetName, setName); err != nil {
-			return abort("could not swap "+tmpSetName+" into "+setName, err)
-		}
-	} else {
-		if err := ipset.Swap(setName, backupSetName); err != nil {
-			return abort("could not rotate "+setName+" into "+backupSetName, err)
-		}
-		if err := ipset.Swap(tmpSetName, setName); err != nil {
-			return abort("could not swap "+tmpSetName+" into "+setName, err)
-		}
+		return nil
 	}
 
-	if err := ipset.Destroy(tmpSetName); err != nil {
-		return fmt.Errorf("set %s was updated but temp set %s could not be removed: %w", setName, tmpSetName, err)
+	// One swap puts the new contents live. The temp set then holds the previous contents.
+	if err := ipset.Swap(tmpSetName, setName); err != nil {
+		return abort("could not swap "+tmpSetName+" into "+setName, err)
+	}
+	if err := destroySet(backupSetName); err != nil {
+		return fmt.Errorf("set %s was updated, but the old backup %s could not be removed: %w", setName, backupSetName, err)
+	}
+	if err := ipset.Rename(tmpSetName, backupSetName); err != nil {
+		return fmt.Errorf("set %s was updated, but the backup could not be saved as %s: %w", setName, backupSetName, err)
 	}
 	return nil
 }

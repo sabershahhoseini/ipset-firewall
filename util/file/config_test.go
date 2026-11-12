@@ -94,3 +94,22 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestCanonicalAddr(t *testing.T) {
+	tests := map[string]string{
+		"203.0.113.42":    "203.0.113.42/32",
+		"10.0.0.0/8":      "10.0.0.0/8",
+		"10.1.2.3/8":      "10.0.0.0/8",
+		"192.0.2.77/24":   "192.0.2.0/24",
+		"198.51.100.7/32": "198.51.100.7/32",
+	}
+	for in, want := range tests {
+		got, err := CanonicalAddr(in)
+		if err != nil || got != want {
+			t.Errorf("CanonicalAddr(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := CanonicalAddr("not-an-ip"); err == nil {
+		t.Error("CanonicalAddr accepted an invalid address")
+	}
+}

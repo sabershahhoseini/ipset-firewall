@@ -148,6 +148,8 @@ Check if IP exists in IR (Iran):
 	} else if *list {
 		ipsetfw.ListAllSets(*verbose)
 	} else if *rollback && *setName != "" {
+		unlock := takeLock()
+		defer unlock()
 		ipsetfw.RollbackSet(*setName)
 	} else if *clear {
 		unlock := takeLock()
@@ -157,6 +159,8 @@ Check if IP exists in IR (Iran):
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)
 		usermgmt.ExitIfNotRoot()
+		unlock := takeLock()
+		defer unlock()
 		checkerr.Fatal(ipsetfw.IPsetfw(ipList, set, *iptables, rule, file.Mattermost{}, "", *verbose))
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
@@ -168,7 +172,7 @@ Check if IP exists in IR (Iran):
 	}
 }
 
-// lockPath is held while a config is applied or cleared, so timers and manual runs do not overlap.
+// lockPath is held by every command that changes sets or rules, so timers and manual runs do not overlap.
 const lockPath = "/run/ipsetfw.lock"
 
 // takeLock acquires the run lock or exits with a message. The returned func releases it.

@@ -136,7 +136,7 @@ block:
 ```
 
 * `proto` needs `ports`.
-* Changing an existing IP-only block to ports (or back) under the same name is refused, and the old set is kept. Rename the block, or run `ipset destroy <name>-block` first.
+* Changing a block between IP-only and ports is handled automatically. The new set is built first, then the old rule and set are removed, and the new set and rule take their place. The block is not enforced for the moment between removing the old rule and adding the new one.
 
 ### Lists, cache and offline use
 
@@ -150,7 +150,7 @@ offline: false              # true: never touch the network; mirror and cache on
 
 * A successful download is stored in the cache. If every source later fails, the cached copy is used and a warning is printed.
 * `-force` ignores fresh cached copies and downloads again.
-* `-plan` never reads or writes the cache.
+* `-plan` uses the mirror and cached copies like a real run, but never writes the cache.
 * For an air-gapped host, put the list files in the mirror directory and set `offline: true`. A list that is in neither the mirror nor the cache is an error.
 * Command-line equivalents: `-force`, `-mirror DIR`, `-offline`.
 
@@ -169,9 +169,13 @@ systemctl enable --now ipsetfw.timer
 
 * The timer runs every 6 hours, 2 minutes after boot, with a random delay of up to 10 minutes. `Persistent=true` runs a missed run after the host was off.
 * Each run uses the cache, so a list is downloaded at most once per `cache.maxAge`.
-* A lock at `/run/ipsetfw.lock` stops a timer run and a manual run from overlapping. The second one exits with an error.
+* A lock at `/run/ipsetfw.lock` is held by every command that changes sets or rules (apply, clear, `-country -set`, `-rollback`), so a timer run and a manual run never overlap. The second one exits with an error.
 * Logs: `journalctl -u ipsetfw.service`. Next run: `systemctl list-timers ipsetfw.timer`.
 * Health check: `ipsetfw -config /etc/ipsetfw/ipsetfw.yml -verify` exits 1 if the live firewall has drifted from the config.
+
+### Updates and rollback
+
+Each update builds the new list in `<set>-tmp`, checks it, and then puts it live in one step. From a set's second update on, the previous list is kept in `<set>-bak`, and `ipsetfw -rollback -set <set>` swaps it back. After the first update there is no backup yet.
 
 ### Checking the firewall
 

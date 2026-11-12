@@ -22,6 +22,8 @@ type CacheOptions struct {
 	MaxAge time.Duration
 	// Force ignores fresh cache entries and downloads again. New copies are still stored.
 	Force bool
+	// ReadOnly uses cached copies but never writes new ones (used by -plan).
+	ReadOnly bool
 }
 
 var cacheOpts = CacheOptions{Dir: DefaultCacheDir, MaxAge: DefaultCacheMaxAge}
@@ -55,7 +57,7 @@ func cachedLines(url string) ([]string, time.Duration, bool) {
 
 // storeLines writes the downloaded lines for url, replacing any older copy atomically.
 func storeLines(url string, lines []string) error {
-	if cacheOpts.Dir == "" {
+	if cacheOpts.Dir == "" || cacheOpts.ReadOnly {
 		return nil
 	}
 	if err := os.MkdirAll(cacheOpts.Dir, 0755); err != nil {

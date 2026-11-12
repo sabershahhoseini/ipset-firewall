@@ -111,3 +111,29 @@ func TestCacheDisabledMeansNoFallback(t *testing.T) {
 		t.Fatal("expected error with cache disabled and source down")
 	}
 }
+
+func TestReadOnlyCacheReadsButNeverWrites(t *testing.T) {
+	dir := t.TempDir()
+	defer withCache(CacheOptions{Dir: dir, MaxAge: time.Hour})()
+	var hits int32
+	srv := serve(t, http.StatusOK, "192.0.2.1\n", &hits)
+	if _, err := fetchFromSources([]string{srv.URL}, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	// Read-only: the fresh copy is used without contacting the source.
+	SetCacheOptions(CacheOptions{Dir: dir, MaxAge: time.Hour, ReadOnly: true})
+	if _, err := fetchFromSources([]string{srv.URL}, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Errorf("read-only mode downloaded although a fresh copy exists: hits=%d", hits)
+	}
+	// Read-only: a new download is not stored.
+	other := serve(t, http.StatusOK, "198.51.100.1\n", nil)
+	if _, err := fetchFromSources([]string{other.URL}, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := cachedLines(other.URL); ok {
+		t.Error("read-only mode wrote a cache entry")
+	}
+}

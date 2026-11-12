@@ -35,6 +35,14 @@ func (b BlockEntry) IsPort() bool {
 	return len(b.Ports) > 0
 }
 
+// DirectionOrDefault returns the match direction: src unless set.
+func (b BlockEntry) DirectionOrDefault() string {
+	if b.Direction == "" {
+		return "src"
+	}
+	return b.Direction
+}
+
 // ProtoOrDefault returns the protocol for a port block: tcp unless set.
 func (b BlockEntry) ProtoOrDefault() string {
 	if b.Proto == "" {
@@ -153,4 +161,17 @@ func checkPorts(b BlockEntry) error {
 		seen[p] = true
 	}
 	return nil
+}
+
+// CanonicalAddr returns an address in the form iptables prints it: a host as a.b.c.d/32 and a
+// network as its network address, so 10.1.2.3/8 becomes 10.0.0.0/8.
+func CanonicalAddr(s string) (string, error) {
+	if err := checkAddress(s); err != nil {
+		return "", err
+	}
+	if !strings.Contains(s, "/") {
+		return net.ParseIP(s).String() + "/32", nil
+	}
+	_, n, _ := net.ParseCIDR(s)
+	return n.String(), nil
 }

@@ -1,4 +1,4 @@
-// Package ipsetcli creates hash:net sets through the ipset command.
+// Package ipsetcli creates sets through the ipset command.
 //
 // The ipset-go library cannot set maxelem when it creates a set, so sets
 // larger than the kernel default of 65536 entries are created with the
@@ -21,12 +21,6 @@ func MaxElemFor(n int) int {
 		return DefaultMaxElem
 	}
 	return n
-}
-
-// CreateHashNetSet creates a hash:net set with the given maxelem. If exist is
-// true, an existing set with the same name is left alone.
-func CreateHashNetSet(name string, maxElem int, exist bool) error {
-	return CreateSet(name, "hash:net", maxElem, exist)
 }
 
 // CreateSet creates a set of any type with the given maxelem. If exist is true,

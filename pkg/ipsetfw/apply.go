@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/coreos/go-iptables/iptables"
 	"github.com/lrh3321/ipset-go"
@@ -25,19 +26,6 @@ func newFormat(inv file.Inventory) bool {
 func baseRule() models.Rule {
 	r := models.Rule{Table: "raw", Chain: "IPSET_FW"}
 	applyRuleDefaults(&r)
-	return r
-}
-
-// blockRule is the drop rule for one block entry. insert is its position in the chain.
-func blockRule(b file.BlockEntry, insert int) models.Rule {
-	dir := b.Direction
-	if dir == "" {
-		dir = "src"
-	}
-	r := baseRule()
-	r.Policy = "drop"
-	r.Insert = insert
-	r.Type = []string{dir}
 	return r
 }
 
@@ -67,7 +55,7 @@ type allowRule struct {
 	addr string
 }
 
-// allowRulesIn returns the ACCEPT rules currently in the chain.
+// allowRulesIn returns the ACCEPT rules currently in the chain, addresses as iptables prints them.
 func allowRulesIn(ipt *iptables.IPTables, r models.Rule) ([]allowRule, error) {
 	lines, err := ipt.List(r.Table, r.Chain)
 	if err != nil {
@@ -84,83 +72,97 @@ func allowRulesIn(ipt *iptables.IPTables, r models.Rule) ([]allowRule, error) {
 	return found, nil
 }
 
-// deleteAllowRules removes every allow rule from the chain.
-func deleteAllowRules(ipt *iptables.IPTables, r models.Rule) error {
-	found, err := allowRulesIn(ipt, r)
-	if err != nil {
-		return err
-	}
-	for _, a := range found {
-		if err := ipt.Delete(r.Table, r.Chain, a.flag, a.addr, "-j", "ACCEPT"); err != nil {
-			return fmt.Errorf("removing allow %s %s: %w", a.flag, a.addr, err)
-		}
-	}
-	return nil
-}
-
-// dedupe returns the unique allow entries in order.
-func dedupe(allows []string) []string {
+// canonicalAllows returns the allow entries in the form iptables prints them, without duplicates.
+func canonicalAllows(allows []string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, a := range allows {
-		if !seen[a] {
-			seen[a] = true
-			out = append(out, a)
+		c, err := file.CanonicalAddr(a)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[c] {
+			seen[c] = true
+			out = append(out, c)
 		}
 	}
-	return out
+	return out, nil
 }
 
-// allowRuleCount is how many chain entries the allow list takes: one -s and one -d per address.
-func allowRuleCount(allows []string) int {
-	return 2 * len(dedupe(allows))
-}
-
-// setAllowRules makes the chain's allow rules exactly the given list, at the top of the chain.
-// Each address is allowed as source and as destination.
-// Earlier allow rules are removed first, so the order is always allows, then blocks.
-func setAllowRules(allows []string, logFilePath string, verbose bool) error {
+// setAllowRules makes the chain's allow rules match the config. Each address is allowed as
+// source and destination. Missing rules are added at the top first, and only then are rules
+// that left the config removed, so a configured address is never without its allow rule.
+func setAllowRules(ipt *iptables.IPTables, allows []string, logFilePath string, verbose bool) error {
 	r := baseRule()
-	ipt, err := iptables.New()
+	want, err := canonicalAllows(allows)
 	if err != nil {
 		return err
 	}
-	if err := createDefaultChain(r.Chain, r.Table); err != nil {
+	wantSet := map[string]bool{}
+	for _, a := range want {
+		wantSet["-s "+a] = true
+		wantSet["-d "+a] = true
+	}
+	have, err := allowRulesIn(ipt, r)
+	if err != nil {
 		return err
 	}
-	if err := addDefaultChainIptableRule(r.Chain, r.Table, r.Parent, logFilePath, verbose); err != nil {
-		return err
+	haveSet := map[string]bool{}
+	for _, h := range have {
+		haveSet[h.flag+" "+h.addr] = true
 	}
-	if err := deleteAllowRules(ipt, r); err != nil {
-		return err
-	}
-	pos := 1
-	for _, a := range dedupe(allows) {
-		logger.Log("Allowing "+a+" as source and destination", logFilePath, verbose)
+
+	for _, a := range want {
 		for _, flag := range []string{"-s", "-d"} {
-			if err := ipt.Insert(r.Table, r.Chain, pos, flag, a, "-j", "ACCEPT"); err != nil {
+			if haveSet[flag+" "+a] {
+				continue
+			}
+			logger.Log("Allowing "+flag+" "+a, logFilePath, verbose)
+			if err := ipt.Insert(r.Table, r.Chain, 1, flag, a, "-j", "ACCEPT"); err != nil {
 				return fmt.Errorf("allow %s %s: %w", flag, a, err)
 			}
-			pos++
+		}
+	}
+	for _, h := range have {
+		if wantSet[h.flag+" "+h.addr] {
+			continue
+		}
+		logger.Log("Removing allow "+h.flag+" "+h.addr, logFilePath, verbose)
+		if err := ipt.Delete(r.Table, r.Chain, h.flag, h.addr, "-j", "ACCEPT"); err != nil {
+			return fmt.Errorf("removing allow %s %s: %w", h.flag, h.addr, err)
 		}
 	}
 	return nil
 }
 
-// removeStaleBlockRules deletes drop rules for "-block" sets that are no longer in the config.
-// It works on the rule text, so it finds net and port rules alike. The sets themselves are kept.
-func removeStaleBlockRules(ipt *iptables.IPTables, r models.Rule, keep map[string]bool) ([]string, error) {
+// dropRules returns, for every DROP rule in the chain, the set it matches and its rule
+// arguments (without "-A CHAIN"), so the rule can be deleted by its own text.
+func dropRules(ipt *iptables.IPTables, r models.Rule) ([][]string, error) {
 	lines, err := ipt.List(r.Table, r.Chain)
 	if err != nil {
 		return nil, err
 	}
-	var stale []string
+	var out [][]string
 	for _, line := range lines {
 		// Expected form: -A IPSET_FW [-p tcp] -m set --match-set ir-block src -j DROP
 		f := strings.Fields(line)
 		if len(f) < 4 || f[0] != "-A" || f[1] != r.Chain || f[len(f)-2] != "-j" || f[len(f)-1] != "DROP" {
 			continue
 		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// removeStaleBlockRules deletes drop rules for "-block" sets that are no longer in the config.
+// The sets themselves are kept.
+func removeStaleBlockRules(ipt *iptables.IPTables, r models.Rule, keep map[string]bool) ([]string, error) {
+	rules, err := dropRules(ipt, r)
+	if err != nil {
+		return nil, err
+	}
+	var stale []string
+	for _, f := range rules {
 		name := matchSetName(f)
 		if name == "" || !strings.HasSuffix(name, "-block") || keep[name] {
 			continue
@@ -171,6 +173,23 @@ func removeStaleBlockRules(ipt *iptables.IPTables, r models.Rule, keep map[strin
 		stale = append(stale, name)
 	}
 	return stale, nil
+}
+
+// deleteRulesForSet deletes every drop rule in the chain that matches setName.
+func deleteRulesForSet(ipt *iptables.IPTables, r models.Rule, setName string) error {
+	rules, err := dropRules(ipt, r)
+	if err != nil {
+		return err
+	}
+	for _, f := range rules {
+		if matchSetName(f) != setName {
+			continue
+		}
+		if err := ipt.Delete(r.Table, r.Chain, f[2:]...); err != nil {
+			return fmt.Errorf("removing rule for %s: %w", setName, err)
+		}
+	}
+	return nil
 }
 
 // matchSetName returns the set named by --match-set in a rule's fields, or "".
@@ -191,7 +210,60 @@ func destroySet(name string) error {
 	return nil
 }
 
-// applyBlockAllow applies a block/allow config: allow rules first, then one set and drop rule per block entry.
+// msgPrefix starts every notification: time and host name.
+func msgPrefix() string {
+	host, _ := os.Hostname()
+	return time.Now().Format("2006-01-02 15:04:05") + " HOST: " + host + " --- "
+}
+
+// blockEntries builds the set entries for one block entry from its merged networks.
+func blockEntries(b file.BlockEntry, nets []string) []ipset.Entry {
+	if b.IsPort() {
+		return portEntries(nets, b.Ports, b.ProtoOrDefault())
+	}
+	return netEntries(nets)
+}
+
+// applyBlock updates one block's set and makes sure its drop rule is in the chain. The rule is
+// appended, so it always comes after the allow rules and does not depend on other blocks.
+func applyBlock(ipt *iptables.IPTables, b file.BlockEntry, mattermost file.Mattermost, logFilePath string, verbose bool) error {
+	r := baseRule()
+	name := b.SetName()
+	notifyOn := mattermost.Token != "" && mattermost.URL != ""
+	fail := func(msg string, err error) error {
+		if notifyOn {
+			notify(mattermost, msgPrefix()+"ERROR: "+msg+": "+err.Error())
+		}
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+
+	list, err := blockSources(b, verbose, logFilePath)
+	if err != nil {
+		return fail("block "+b.Name, err)
+	}
+	nets := netutils.MergeIPsToCIDRs(list)
+	if len(nets) == 0 {
+		return fail("block "+b.Name, errors.New("no valid networks"))
+	}
+	entries := blockEntries(b, nets)
+	onTypeChange := func() error { return deleteRulesForSet(ipt, r, name) }
+	if err := replaceSet(name, setTypeOf(b), entries, onTypeChange, logFilePath, verbose); err != nil {
+		return fail("could not update set "+name, err)
+	}
+	if err := ipt.AppendUnique(r.Table, r.Chain, blockMatchArgs(b, name)...); err != nil {
+		return fail("could not add drop rule for "+name, err)
+	}
+
+	msg := fmt.Sprintf("%sUpdated set %s (%s, %d entries) from %s", msgPrefix(), name, setTypeOf(b), len(entries), sourceText(b))
+	fmt.Println(msg)
+	if notifyOn {
+		notify(mattermost, msg)
+	}
+	return nil
+}
+
+// applyBlockAllow applies a block/allow config: allow rules at the top, then one set and drop rule
+// per block entry. A failing block is reported and skipped; the others still run.
 func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	if err := inv.Validate(); err != nil {
@@ -206,18 +278,26 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 		mattermost = inv.Mattermost
 	}
 
-	if err := setAllowRules(inv.Allow, logFilePath, verbose); err != nil {
-		return fmt.Errorf("allow rules: %w", err)
-	}
+	r := baseRule()
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
+	if err := createDefaultChain(r.Chain, r.Table); err != nil {
+		return err
+	}
+	if err := addDefaultChainIptableRule(r.Chain, r.Table, r.Parent, logFilePath, verbose); err != nil {
+		return err
+	}
+	if err := setAllowRules(ipt, inv.Allow, logFilePath, verbose); err != nil {
+		return fmt.Errorf("allow rules: %w", err)
+	}
+
 	keep := map[string]bool{}
 	for _, b := range inv.Block {
 		keep[b.SetName()] = true
 	}
-	stale, err := removeStaleBlockRules(ipt, baseRule(), keep)
+	stale, err := removeStaleBlockRules(ipt, r, keep)
 	if err != nil {
 		return err
 	}
@@ -227,29 +307,8 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 
 	var failed []string
 	applied := map[string]bool{}
-	for k, b := range inv.Block {
-		if b.IsPort() {
-			if err := applyPortBlock(b, allowRuleCount(inv.Allow)+k+1, mattermost, logFilePath, verbose); err != nil {
-				fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
-				failed = append(failed, b.Name)
-				continue
-			}
-			applied[b.SetName()] = true
-			continue
-		}
-		list, err := blockSources(b, verbose, logFilePath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
-			failed = append(failed, b.Name)
-			continue
-		}
-		country := b.Country
-		if country == "" {
-			country = b.Name
-		}
-		set := models.Set{Country: country, SetName: b.SetName()}
-		rule := blockRule(b, allowRuleCount(inv.Allow)+k+1)
-		if err := IPsetfw(list, set, true, rule, mattermost, logFilePath, verbose); err != nil {
+	for _, b := range inv.Block {
+		if err := applyBlock(ipt, b, mattermost, logFilePath, verbose); err != nil {
 			fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
 			failed = append(failed, b.Name)
 			continue
@@ -265,7 +324,8 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	return nil
 }
 
-// clearBlockAllow removes everything applyBlockAllow created: allow rules, block rules and sets, the jump and the chain.
+// clearBlockAllow removes everything applyBlockAllow created: the rules in IPSET_FW, the block
+// sets and their backups, the jump and the chain.
 func clearBlockAllow(inv file.Inventory, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	r := baseRule()
@@ -273,18 +333,16 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 	if err != nil {
 		return err
 	}
-	// IPSET_FW belongs to this tool, so clearing the whole chain is safe.
-	if err := ipt.ClearChain(r.Table, r.Chain); err != nil {
-		return fmt.Errorf("clearing %s: %w", r.Chain, err)
+	// IPSET_FW belongs to this tool, so clearing the whole chain is safe. It also drops every
+	// reference to the block sets, so they can be destroyed.
+	if exists, err := ipt.ChainExists(r.Table, r.Chain); err != nil {
+		return err
+	} else if exists {
+		if err := ipt.ClearChain(r.Table, r.Chain); err != nil {
+			return fmt.Errorf("clearing %s: %w", r.Chain, err)
+		}
 	}
 	for _, b := range inv.Block {
-		if b.IsPort() {
-			if err := deletePortBlockRule(b, r.Chain); err != nil {
-				return err
-			}
-		} else if err := removeIptableRule(blockRule(b, 1), b.SetName(), r.Chain, "", verbose, true); err != nil {
-			return err
-		}
 		if err := destroySet(b.SetName()); err != nil {
 			return err
 		}
@@ -301,7 +359,8 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 	return forgetBlocks(inv)
 }
 
-// PlanConfig prints what applying a block/allow config would do. It changes no sets or iptables rules.
+// PlanConfig prints what applying a block/allow config would do. It changes no sets, iptables
+// rules or cache files. It uses the mirror and cached copies like a real run does.
 func PlanConfig(path string, verbose bool) error {
 	inv := file.DecodeConfig(file.ReadConfigFile(path))
 	if !newFormat(inv) {
@@ -315,30 +374,29 @@ func PlanConfig(path string, verbose bool) error {
 	}
 	r := baseRule()
 	fmt.Printf("chain %s (table %s, from %s): allow rules first, then block rules\n", r.Chain, r.Table, r.Parent)
-	for _, a := range inv.Allow {
+	allows, err := canonicalAllows(inv.Allow)
+	if err != nil {
+		return err
+	}
+	for _, a := range allows {
 		fmt.Printf("  allow   %-18s ACCEPT as source and destination\n", a)
 	}
 	var failed []string
-	for k, b := range inv.Block {
-		dir := b.Direction
-		if dir == "" {
-			dir = "src"
-		}
+	for _, b := range inv.Block {
+		dir := b.DirectionOrDefault()
 		list, err := blockSources(b, verbose, inv.LogFilePath)
 		if err != nil {
 			fmt.Printf("  block   %-14s ERROR: %v\n", b.Name, err)
 			failed = append(failed, b.Name)
 			continue
 		}
-		merged := netutils.MergeIPsToCIDRs(list)
-		entries := len(merged)
+		nets := netutils.MergeIPsToCIDRs(list)
+		entries := len(blockEntries(b, nets))
 		if b.IsPort() {
-			entries = len(merged) * len(b.Ports)
-			fmt.Printf("  block   %-14s %s  drop  %d entries  set %s (hash:net,port, %s %s)  rule %d\n",
-				b.Name, dir, entries, b.SetName(), joinPorts(b.Ports), b.ProtoOrDefault(), allowRuleCount(inv.Allow)+k+1)
+			fmt.Printf("  block   %-14s %s  drop  %d entries  set %s (hash:net,port, %s %s)\n",
+				b.Name, dir, entries, b.SetName(), joinPorts(b.Ports), b.ProtoOrDefault())
 		} else {
-			fmt.Printf("  block   %-14s %s  drop  %d entries  set %s  rule %d\n",
-				b.Name, dir, entries, b.SetName(), allowRuleCount(inv.Allow)+k+1)
+			fmt.Printf("  block   %-14s %s  drop  %d entries  set %s\n", b.Name, dir, entries, b.SetName())
 		}
 		if dir == "dst" {
 			fmt.Printf("          warning: dst matches packets addressed TO these networks; make sure this host is not in them\n")

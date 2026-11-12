@@ -59,14 +59,6 @@ func StatusConfig(path string, verbose bool) error {
 	return nil
 }
 
-// normalizeAddr writes a host address as iptables prints it: 1.2.3.4 becomes 1.2.3.4/32.
-func normalizeAddr(a string) string {
-	if !strings.Contains(a, "/") {
-		return a + "/32"
-	}
-	return a
-}
-
 // VerifyConfig compares the live firewall with the config and reports every difference.
 // It returns an error if anything differs. It downloads nothing.
 func VerifyConfig(path string, verbose bool) error {
@@ -96,10 +88,14 @@ func VerifyConfig(path string, verbose bool) error {
 	}
 
 	// Allow rules: exactly the configured addresses, as source and destination.
+	allows, err := canonicalAllows(inv.Allow)
+	if err != nil {
+		return err
+	}
 	want := map[string]bool{}
-	for _, a := range dedupe(inv.Allow) {
-		want["-s "+normalizeAddr(a)] = true
-		want["-d "+normalizeAddr(a)] = true
+	for _, a := range allows {
+		want["-s "+a] = true
+		want["-d "+a] = true
 	}
 	have, err := allowRulesIn(ipt, r)
 	if err != nil {
@@ -159,11 +155,11 @@ func VerifyConfig(path string, verbose bool) error {
 	}
 
 	// Stale drop rules for block sets no longer in the config.
-	for _, line := range lines {
-		f := strings.Fields(line)
-		if len(f) < 4 || f[0] != "-A" || f[len(f)-2] != "-j" || f[len(f)-1] != "DROP" {
-			continue
-		}
+	drops, err := dropRules(ipt, r)
+	if err != nil {
+		return err
+	}
+	for _, f := range drops {
 		name := matchSetName(f)
 		if strings.HasSuffix(name, "-block") && !keep[name] {
 			bad("stale drop rule for " + name + " (not in config)")

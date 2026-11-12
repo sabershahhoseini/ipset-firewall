@@ -198,12 +198,6 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, logFi
 	return nil
 }
 
-func includeExtraIPs(ipList []string, extraIPs []string) []string {
-	for _, ip := range extraIPs {
-		ipList = append(ipList, ip)
-	}
-	return ipList
-}
 func parseIPAndCIDR(ip string) (net.IP, uint8) {
 	parsedIP, _, _ := net.ParseCIDR(ip)
 	cidr := strings.Split(string(ip), "/")
@@ -222,6 +216,10 @@ func convertIPToEntry(ip string) ipset.Entry {
 }
 func RollbackSet(setName string) {
 	backupSetName := setName + "-bak"
+	if _, err := ipset.List(backupSetName); err != nil {
+		fmt.Fprintln(os.Stderr, "no backup for "+setName+" yet: a backup is kept from the second update on")
+		os.Exit(1)
+	}
 	err := ipset.Swap(backupSetName, setName)
 	checkerr.Fatal(err)
 	fmt.Println("Successfully rolled back set " + setName + " with backup set " + backupSetName)
@@ -311,7 +309,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 		}
 	}
 
-	if err := replaceSet(setName, "hash:net", netEntries(ipListMerged), logFilePath, verbose); err != nil {
+	if err := replaceSet(setName, "hash:net", netEntries(ipListMerged), nil, logFilePath, verbose); err != nil {
 		return fail("could not update set "+setName, err)
 	}
 
@@ -399,7 +397,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) error {
 			failedSets = append(failedSets, set.SetName)
 			continue
 		}
-		ipList = includeExtraIPs(ipList, r.ExtraIPs)
+		ipList = append(ipList, r.ExtraIPs...)
 
 		if err := IPsetfw(ipList, set, useIptables, rule, mattermost, logFilePath, verbose); err != nil {
 			fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())

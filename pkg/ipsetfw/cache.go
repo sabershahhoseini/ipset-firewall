@@ -16,10 +16,9 @@ var (
 	OfflineFlag bool
 )
 
-// configureSources applies the cache and mirror settings of a config. off disables the
-// cache and keeps the mirror read-only (used by -plan).
-func configureSources(inv file.Inventory, off bool) error {
-	if err := configureCache(inv.Cache, off); err != nil {
+// configureSources applies the cache and mirror settings of a config. readOnly is used by -plan.
+func configureSources(inv file.Inventory, readOnly bool) error {
+	if err := configureCache(inv.Cache, readOnly); err != nil {
 		return err
 	}
 	mirror := MirrorFlag
@@ -30,9 +29,9 @@ func configureSources(inv file.Inventory, off bool) error {
 	return nil
 }
 
-// configureCache applies the cache section of a config. off disables reads and writes
-// (used by -plan, which must not change anything).
-func configureCache(c file.CacheConfig, off bool) error {
+// configureCache applies the cache section of a config. readOnly keeps using cached copies but
+// never writes new ones (used by -plan, which must not change anything).
+func configureCache(c file.CacheConfig, readOnly bool) error {
 	o := netutils.CacheOptions{
 		Dir:    netutils.DefaultCacheDir,
 		MaxAge: netutils.DefaultCacheMaxAge,
@@ -51,9 +50,7 @@ func configureCache(c file.CacheConfig, off bool) error {
 		}
 		o.MaxAge = d
 	}
-	if off {
-		o.Dir = ""
-	}
+	o.ReadOnly = readOnly
 	netutils.SetCacheOptions(o)
 	return nil
 }
