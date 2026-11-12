@@ -21,8 +21,23 @@ func protoNumber(proto string) uint8 {
 	return protoTCP
 }
 
+// expandZero replaces 0.0.0.0/0, which ipset sets cannot hold (they take /1 to /32), with its
+// two halves. Without this, ipset stores /0 as the single address 0.0.0.0.
+func expandZero(nets []string) []string {
+	out := make([]string, 0, len(nets))
+	for _, n := range nets {
+		if n == "0.0.0.0/0" {
+			out = append(out, "0.0.0.0/1", "128.0.0.0/1")
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 // netEntries turns merged networks into hash:net entries.
 func netEntries(nets []string) []ipset.Entry {
+	nets = expandZero(nets)
 	entries := make([]ipset.Entry, 0, len(nets))
 	for _, n := range nets {
 		entries = append(entries, convertIPToEntry(n))
@@ -32,6 +47,7 @@ func netEntries(nets []string) []ipset.Entry {
 
 // portEntries makes one hash:net,port entry for every network and port pair.
 func portEntries(nets []string, ports []int, proto string) []ipset.Entry {
+	nets = expandZero(nets)
 	pr := protoNumber(proto)
 	entries := make([]ipset.Entry, 0, len(nets)*len(ports))
 	for _, n := range nets {

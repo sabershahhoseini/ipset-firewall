@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lrh3321/ipset-go"
+
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/sshclients"
 )
@@ -95,4 +97,26 @@ only:
 			t.Errorf("clientAllowed(%s:%d) = %v, want %v", c.ip, c.port, got, c.want)
 		}
 	}
+}
+
+func TestZeroNetworkIsSplitInHalves(t *testing.T) {
+	for _, entries := range [][]string{
+		describeAll(netEntries([]string{"0.0.0.0/0"})),
+		describeAll(portEntries([]string{"0.0.0.0/0"}, []int{80}, "tcp")),
+	} {
+		if len(entries) != 2 || !strings.HasPrefix(entries[0], "0.0.0.0/1") || !strings.HasPrefix(entries[1], "128.0.0.0/1") {
+			t.Errorf("entries = %q, want 0.0.0.0/1 and 128.0.0.0/1", entries)
+		}
+	}
+	if got := describeAll(netEntries([]string{"10.0.0.0/8"})); len(got) != 1 || got[0] != "10.0.0.0/8" {
+		t.Errorf("other networks changed: %q", got)
+	}
+}
+
+func describeAll(es []ipset.Entry) []string {
+	var out []string
+	for _, e := range es {
+		out = append(out, describeEntry(e))
+	}
+	return out
 }
