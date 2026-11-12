@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/models"
 	"github.com/sabershahhoseini/ipset-firewall/pkg/ipsetfw"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
@@ -105,7 +106,8 @@ Check if IP exists in IR (Iran):
 		Policy: *iptablesPolicy,
 	}
 	if *export {
-		ipList := netutils.FetchIPPool(*countryCode, *verbose, "", "")
+		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, "", "")
+		checkerr.Fatal(err)
 		file.ExportToFile(*filePath, ipList, *verbose)
 	} else if *config != "" && !*clear {
 		ipsetfw.LoopConfigFile(*config, *iptables, *verbose)
@@ -118,10 +120,12 @@ Check if IP exists in IR (Iran):
 	} else if *clear {
 		ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose)
 	} else if *countryCode != "" && *setName != "" {
-		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
+		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
+		checkerr.Fatal(err)
 		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, rule, file.Mattermost{}, "", *verbose)
 	} else if *countryCode != "" && *checkIP != "" {
-		ipList := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
+		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
+		checkerr.Fatal(err)
 		netutils.CheckIPExistsInPool(ipList, *checkIP, *verbose)
 	}
 }

@@ -45,12 +45,14 @@ func ReadConfigFile(path string) string {
 	return buf.String()
 }
 
-func ReadListFile(file string) []string {
+func ReadListFile(file string) ([]string, error) {
 	b, err := os.ReadFile(file)
-	checkerr.Fatal(err)
+	if err != nil {
+		return nil, err
+	}
 
 	ipList := strings.Split(string(b), "\n")
-	return ipList
+	return ipList, nil
 }
 
 func DecodeConfig(config string) Inventory {

@@ -379,16 +379,30 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 		if r.IPtables.Policy != "" {
 			iptables = true
 		}
+		failed := false
 		if len(r.Path) != 0 {
 			for _, path := range r.Path {
-				ipList = netutils.FetchIPPool(*&set.Country, verbose, path, logFilePath)
+				fetched, err := netutils.FetchIPPool(*&set.Country, verbose, path, logFilePath)
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "skipping set "+set.SetName+": "+err.Error())
+					failed = true
+					break
+				}
+				ipList = fetched
 				ipList = includeExtraIPs(ipList, r.ExtraIPs)
 				ipListConcatenated = append(ipListConcatenated, ipList...)
 			}
+			if failed {
+				continue
+			}
 			IPsetfw(ipListConcatenated, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose)
 		} else {
-			ipList := netutils.FetchIPPool(*&set.Country, verbose, "", logFilePath)
-			ipList = includeExtraIPs(ipList, r.ExtraIPs)
+			fetched, err := netutils.FetchIPPool(*&set.Country, verbose, "", logFilePath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "skipping set "+set.SetName+": "+err.Error())
+				continue
+			}
+			ipList := includeExtraIPs(fetched, r.ExtraIPs)
 			IPsetfw(ipList, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose)
 		}
 	}

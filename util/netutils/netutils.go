@@ -3,14 +3,13 @@ package netutils
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/EvilSuperstars/go-cidrman"
-	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 )
@@ -61,73 +60,98 @@ func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 	return false
 }
 
-func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath string) []string {
+// FetchIPPool returns the merged CIDR list for a country (or tor), read either
+// from filePath or from GitHub. It returns an error instead of exiting, and
+// never returns an empty list without an error.
+func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath string) ([]string, error) {
 
-	var ipList []string
 	var url string
 	countryCode = strings.ToLower(countryCode)
 
 	if countryCode == "tor" {
 		url = TorURL
 	} else {
-		tmpUrl := GeoURL
-		url = strings.Replace(tmpUrl, "COUNTRY_CODE", countryCode, 1)
+		url = strings.Replace(GeoURL, "COUNTRY_CODE", countryCode, 1)
 	}
 
-	// If file argument is passed, read file and create set
+	var lines []string
+	var source string
 	if filePath != "" {
+		// If file argument is passed, read file and create set
 		logger.Log("Reading file from "+filePath, logFilePath, verbose)
-		ipList = file.ReadListFile(filePath)
-		list := MergeIPsToCIDRs(ipList)
-		fmt.Println(list)
-		return list
-	}
-	// Else, go fetch from github
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		log.Fatalln(err)
+		fileLines, err := file.ReadListFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", filePath, err)
+		}
+		lines = fileLines
+		source = filePath
+	} else {
+		// Else, go fetch from github
+		fetched, err := fetchURL(url, logFilePath, verbose)
+		if err != nil {
+			return nil, err
+		}
+		lines = fetched
+		source = url
 	}
 
-	client := &http.Client{}
+	list := MergeIPsToCIDRs(lines)
+	if len(list) == 0 {
+		return nil, fmt.Errorf("no valid networks found in %s", source)
+	}
+	return list, nil
+}
+
+// fetchURL downloads a newline-separated list, failing on transport errors,
+// timeouts and non-2xx responses.
+func fetchURL(url string, logFilePath string, verbose bool) ([]string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	logger.Log("Trying to get url: "+url, logFilePath, verbose)
-	resp, err := client.Do(req)
+	resp, err := client.Get(url)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
-
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("fetching %s: unexpected status %s", url, resp.Status)
+	}
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, fmt.Errorf("reading body of %s: %w", url, err)
 	}
-	list := strings.Split(string(b), "\n")
 	logger.Log("Finished fetching list of IPs", logFilePath, verbose)
-	list = MergeIPsToCIDRs(list)
-	return list
+	return strings.Split(string(b), "\n"), nil
 }
 
+// MergeIPsToCIDRs normalizes and merges a list of IPs/CIDRs. Invalid lines,
+// IPv6 entries and blank lines are skipped. It never panics.
 func MergeIPsToCIDRs(ipList []string) []string {
 
-	var ipNet *net.IPNet
 	var ipNetList []*net.IPNet
 	var ipListMerged []string
 
-	for _, ip := range ipList {
+	for _, line := range ipList {
+		ip := strings.TrimSpace(line)
 		if ip == "" || strings.Contains(ip, ":") {
 			continue
 		}
-		if !strings.Contains(ip, "/") {
-			_, ipn, err := net.ParseCIDR(ip + "/32")
-			checkerr.Fatal(err)
-			ipNet = ipn
-		} else {
-			_, ipNet, _ = net.ParseCIDR(ip)
+		normalized, isValid := IsCIDRValid(ip)
+		if !isValid {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(normalized)
+		if err != nil || ipNet == nil {
+			continue
 		}
 		ipNetList = append(ipNetList, ipNet)
 	}
-	merged, _ := cidrman.MergeIPNets(ipNetList)
+	merged, err := cidrman.MergeIPNets(ipNetList)
+	if err != nil {
+		return nil
+	}
 	for _, ip := range merged {
 		ipListMerged = append(ipListMerged, ip.String())
 	}
