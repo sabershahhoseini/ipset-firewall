@@ -24,6 +24,23 @@ type BlockEntry struct {
 	File      []string `yaml:"file"`
 	IPs       []string `yaml:"ips"`
 	Direction string   `yaml:"direction"`
+	// Ports limits the block to these destination ports (hash:net,port set).
+	Ports []int `yaml:"ports"`
+	// Proto is tcp or udp when Ports is set; default tcp.
+	Proto string `yaml:"proto"`
+}
+
+// IsPort reports whether the entry is limited to ports.
+func (b BlockEntry) IsPort() bool {
+	return len(b.Ports) > 0
+}
+
+// ProtoOrDefault returns the protocol for a port block: tcp unless set.
+func (b BlockEntry) ProtoOrDefault() string {
+	if b.Proto == "" {
+		return "tcp"
+	}
+	return b.Proto
 }
 
 // SetName is the ipset name for the entry: <name>-block.
@@ -78,6 +95,9 @@ func (inv Inventory) Validate() error {
 		default:
 			return fmt.Errorf("block %q: direction must be src or dst, got %q", b.Name, b.Direction)
 		}
+		if err := checkPorts(b); err != nil {
+			return err
+		}
 		setName := b.SetName()
 		if len(setName) > maxSetNameLen {
 			return fmt.Errorf("block %q: set name %q is longer than %d characters", b.Name, setName, maxSetNameLen)
@@ -108,6 +128,29 @@ func checkAddress(s string) error {
 	}
 	if net.ParseIP(s) == nil {
 		return fmt.Errorf("%q: invalid address", s)
+	}
+	return nil
+}
+
+// checkPorts validates the ports and proto of a block entry.
+func checkPorts(b BlockEntry) error {
+	if b.Proto != "" && !b.IsPort() {
+		return fmt.Errorf("block %q: proto needs ports", b.Name)
+	}
+	switch b.Proto {
+	case "", "tcp", "udp":
+	default:
+		return fmt.Errorf("block %q: proto must be tcp or udp, got %q", b.Name, b.Proto)
+	}
+	seen := map[int]bool{}
+	for _, p := range b.Ports {
+		if p < 1 || p > 65535 {
+			return fmt.Errorf("block %q: port %d out of range 1-65535", b.Name, p)
+		}
+		if seen[p] {
+			return fmt.Errorf("block %q: duplicate port %d", b.Name, p)
+		}
+		seen[p] = true
 	}
 	return nil
 }

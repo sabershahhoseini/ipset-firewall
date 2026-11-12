@@ -14,7 +14,6 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/models"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
-	"github.com/sabershahhoseini/ipset-firewall/util/ipsetcli"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
 	"github.com/sabershahhoseini/ipset-firewall/util/notif"
@@ -276,8 +275,6 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
 	setName := setModel.SetName
 	countryCode := setModel.Country
-	tmpSetName := setName + "-tmp"
-	backupSetName := setName + "-bak"
 
 	applyRuleDefaults(&rule)
 	if iptables {
@@ -302,17 +299,11 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 		}
 		return fmt.Errorf("%s: %w", msg, err)
 	}
-	// abort removes the temp set, then reports the failure. The live set is never touched on abort.
-	abort := func(msg string, err error) error {
-		_ = ipset.Destroy(tmpSetName)
-		return fail(msg, err)
-	}
 
 	ipListMerged := netutils.MergeIPsToCIDRs(ipList)
 	if len(ipListMerged) == 0 {
 		return fail("refusing to update set "+setName, errors.New("no valid networks"))
 	}
-	maxElem := ipsetcli.MaxElemFor(len(ipListMerged))
 
 	if iptables && !isBuiltinChain(rule.Chain) {
 		if err := createDefaultChain(rule.Chain, rule.Table); err != nil {
@@ -320,66 +311,10 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 		}
 	}
 
-	// Remove a temp set left behind by an earlier failed run.
-	if err := ipset.Destroy(tmpSetName); err != nil && !errors.Is(err, syscall.ENOENT) {
-		return fail("could not remove stale temp set "+tmpSetName, err)
+	if err := replaceSet(setName, "hash:net", netEntries(ipListMerged), logFilePath, verbose); err != nil {
+		return fail("could not update set "+setName, err)
 	}
 
-	// Build the new pool in the temp set. The live set is only swapped once the temp set is complete.
-	if err := ipsetcli.CreateHashNetSet(tmpSetName, maxElem, false); err != nil {
-		return fail("could not create temp set "+tmpSetName, err)
-	}
-	for _, ip := range ipListMerged {
-		logger.Log("Adding "+ip, logFilePath, verbose)
-		entry := convertIPToEntry(ip)
-		if err := ipset.Add(tmpSetName, &entry); err != nil {
-			return abort("could not add "+ip+" to "+tmpSetName, err)
-		}
-	}
-	tmpInfo, err := ipset.List(tmpSetName)
-	if err != nil {
-		return abort("could not read back temp set "+tmpSetName, err)
-	}
-	if int(tmpInfo.NumEntries) != len(ipListMerged) {
-		return abort("temp set "+tmpSetName+" has wrong entry count",
-			fmt.Errorf("got %d, want %d", tmpInfo.NumEntries, len(ipListMerged)))
-	}
-
-	if err := ipsetcli.CreateHashNetSet(setName, maxElem, true); err != nil {
-		return abort("could not create set "+setName, err)
-	}
-
-	_, listErr := ipset.List(backupSetName)
-	if listErr != nil && !errors.Is(listErr, syscall.ENOENT) {
-		return abort("could not inspect backup set "+backupSetName, listErr)
-	}
-	if listErr != nil {
-		// First run: create the backup filled with the new entries, then swap the temp set in.
-		if err := ipsetcli.CreateHashNetSet(backupSetName, maxElem, false); err != nil {
-			return abort("could not create backup set "+backupSetName, err)
-		}
-		for _, ip := range ipListMerged {
-			entry := convertIPToEntry(ip)
-			if err := ipset.Add(backupSetName, &entry); err != nil {
-				_ = ipset.Destroy(backupSetName)
-				return abort("could not fill backup set "+backupSetName, err)
-			}
-		}
-		if err := ipset.Swap(tmpSetName, setName); err != nil {
-			return abort("could not swap "+tmpSetName+" into "+setName, err)
-		}
-	} else {
-		if err := ipset.Swap(setName, backupSetName); err != nil {
-			return abort("could not rotate "+setName+" into "+backupSetName, err)
-		}
-		if err := ipset.Swap(tmpSetName, setName); err != nil {
-			return abort("could not swap "+tmpSetName+" into "+setName, err)
-		}
-	}
-
-	if err := ipset.Destroy(tmpSetName); err != nil {
-		return fail("set "+setName+" was updated but temp set "+tmpSetName+" could not be removed", err)
-	}
 	if iptables {
 		if err := addDefaultChainIptableRule(rule.Chain, rule.Table, rule.Parent, logFilePath, verbose); err != nil {
 			return fail("could not add jump from "+rule.Parent+" to chain "+rule.Chain, err)

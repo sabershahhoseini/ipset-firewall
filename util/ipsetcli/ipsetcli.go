@@ -26,7 +26,13 @@ func MaxElemFor(n int) int {
 // CreateHashNetSet creates a hash:net set with the given maxelem. If exist is
 // true, an existing set with the same name is left alone.
 func CreateHashNetSet(name string, maxElem int, exist bool) error {
-	args := []string{"create", name, "hash:net", "maxelem", strconv.Itoa(maxElem)}
+	return CreateSet(name, "hash:net", maxElem, exist)
+}
+
+// CreateSet creates a set of any type with the given maxelem. If exist is true,
+// an existing set with the same name is left alone.
+func CreateSet(name, typ string, maxElem int, exist bool) error {
+	args := []string{"create", name, typ, "maxelem", strconv.Itoa(maxElem)}
 	if exist {
 		args = append(args, "-exist")
 	}

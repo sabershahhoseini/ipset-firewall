@@ -119,6 +119,41 @@ block:
 * Invalid configs are refused before anything changes.
 * The older `rules:` format still works, but it can't be mixed with `block` or `allow`.
 
+### Port-scoped blocks
+
+Add `ports` to limit a block to some destination ports. The set is `hash:net,port`.
+
+```yaml
+block:
+  - name: ssh-scanners
+    ips: [192.0.2.0/24]
+    ports: [22, 443]
+    proto: tcp            # tcp (default) or udp
+  - name: web-out
+    ips: [198.51.100.0/24]
+    ports: [80]
+    direction: dst        # dst,dst: traffic to these networks on port 80
+```
+
+* `proto` needs `ports`.
+* Changing an existing IP-only block to ports (or back) under the same name is refused, and the old set is kept. Rename the block, or run `ipset destroy <name>-block` first.
+
+### Lists, cache and offline use
+
+```yaml
+cache:
+  dir: /var/cache/ipsetfw   # or "off"
+  maxAge: 12h               # a copy younger than this is used without downloading
+mirror: /srv/ipsetfw/mirror # <code>.txt files (ir.txt, tor.txt) used before any download
+offline: false              # true: never touch the network; mirror and cache only
+```
+
+* A successful download is stored in the cache. If every source later fails, the cached copy is used and a warning is printed.
+* `-force` ignores fresh cached copies and downloads again.
+* `-plan` never reads or writes the cache.
+* For an air-gapped host, put the list files in the mirror directory and set `offline: true`. A list that is in neither the mirror nor the cache is an error.
+* Command-line equivalents: `-force`, `-mirror DIR`, `-offline`.
+
 ### Notes
 
 * Country lists come from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (CC0, updated daily) and fall back to [ipdeny.com](https://www.ipdeny.com/ipblocks/). Tor exit nodes come from the [Tor Project bulk exit list](https://check.torproject.org/torbulkexitlist) and fall back to [SecOps-Institute/Tor-IP-Addresses](https://github.com/SecOps-Institute/Tor-IP-Addresses). Sources are tried in order, and an empty result counts as a failure.

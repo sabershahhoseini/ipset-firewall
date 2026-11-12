@@ -148,7 +148,7 @@ func setAllowRules(allows []string, logFilePath string, verbose bool) error {
 }
 
 // removeStaleBlockRules deletes drop rules for "-block" sets that are no longer in the config.
-// The sets themselves are kept; the returned names let the caller report them.
+// It works on the rule text, so it finds net and port rules alike. The sets themselves are kept.
 func removeStaleBlockRules(ipt *iptables.IPTables, r models.Rule, keep map[string]bool) ([]string, error) {
 	lines, err := ipt.List(r.Table, r.Chain)
 	if err != nil {
@@ -156,21 +156,31 @@ func removeStaleBlockRules(ipt *iptables.IPTables, r models.Rule, keep map[strin
 	}
 	var stale []string
 	for _, line := range lines {
-		// Expected form: -A IPSET_FW -m set --match-set ir-block src -j DROP
+		// Expected form: -A IPSET_FW [-p tcp] -m set --match-set ir-block src -j DROP
 		f := strings.Fields(line)
-		if len(f) != 9 || f[2] != "-m" || f[3] != "set" || f[4] != "--match-set" || f[7] != "-j" || f[8] != "DROP" {
+		if len(f) < 4 || f[0] != "-A" || f[1] != r.Chain || f[len(f)-2] != "-j" || f[len(f)-1] != "DROP" {
 			continue
 		}
-		name := f[5]
-		if !strings.HasSuffix(name, "-block") || keep[name] {
+		name := matchSetName(f)
+		if name == "" || !strings.HasSuffix(name, "-block") || keep[name] {
 			continue
 		}
-		if err := ipt.Delete(r.Table, r.Chain, "-m", "set", "--match-set", name, f[6], "-j", "DROP"); err != nil {
+		if err := ipt.Delete(r.Table, r.Chain, f[2:]...); err != nil {
 			return nil, fmt.Errorf("removing stale rule for %s: %w", name, err)
 		}
 		stale = append(stale, name)
 	}
 	return stale, nil
+}
+
+// matchSetName returns the set named by --match-set in a rule's fields, or "".
+func matchSetName(f []string) string {
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] == "--match-set" {
+			return f[i+1]
+		}
+	}
+	return ""
 }
 
 // destroySet deletes a set, ignoring "does not exist".
@@ -217,6 +227,13 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 
 	var failed []string
 	for k, b := range inv.Block {
+		if b.IsPort() {
+			if err := applyPortBlock(b, allowRuleCount(inv.Allow)+k+1, mattermost, logFilePath, verbose); err != nil {
+				fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
+				failed = append(failed, b.Name)
+			}
+			continue
+		}
 		list, err := blockSources(b, verbose, logFilePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "block "+b.Name+" not updated: "+err.Error())
@@ -253,7 +270,11 @@ func clearBlockAllow(inv file.Inventory, verbose bool) error {
 		return fmt.Errorf("clearing %s: %w", r.Chain, err)
 	}
 	for _, b := range inv.Block {
-		if err := removeIptableRule(blockRule(b, 1), b.SetName(), r.Chain, "", verbose, true); err != nil {
+		if b.IsPort() {
+			if err := deletePortBlockRule(b, r.Chain); err != nil {
+				return err
+			}
+		} else if err := removeIptableRule(blockRule(b, 1), b.SetName(), r.Chain, "", verbose, true); err != nil {
 			return err
 		}
 		if err := destroySet(b.SetName()); err != nil {
@@ -299,8 +320,15 @@ func PlanConfig(path string, verbose bool) error {
 			continue
 		}
 		merged := netutils.MergeIPsToCIDRs(list)
-		fmt.Printf("  block   %-14s %s  drop  %d entries  set %s  rule %d\n",
-			b.Name, dir, len(merged), b.SetName(), allowRuleCount(inv.Allow)+k+1)
+		entries := len(merged)
+		if b.IsPort() {
+			entries = len(merged) * len(b.Ports)
+			fmt.Printf("  block   %-14s %s  drop  %d entries  set %s (hash:net,port, %s %s)  rule %d\n",
+				b.Name, dir, entries, b.SetName(), joinPorts(b.Ports), b.ProtoOrDefault(), allowRuleCount(inv.Allow)+k+1)
+		} else {
+			fmt.Printf("  block   %-14s %s  drop  %d entries  set %s  rule %d\n",
+				b.Name, dir, entries, b.SetName(), allowRuleCount(inv.Allow)+k+1)
+		}
 		if dir == "dst" {
 			fmt.Printf("          warning: dst matches packets addressed TO these networks; make sure this host is not in them\n")
 		}

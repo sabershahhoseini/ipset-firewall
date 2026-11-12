@@ -71,6 +71,11 @@ func TestValidate(t *testing.T) {
 		{"ipv6 block ip", "block:\n  - {name: a, ips: ['2001:db8::/32']}\n", "IPv6 is not supported"},
 		{"mixed with rules", "rules:\n  - country: ir\n    set: ir-block\nblock: [tor]\n", "mixes 'rules'"},
 		{"legacy only is fine", "rules:\n  - country: ir\n    set: ir-block\n", ""},
+		{"ports ok", "block:\n  - {name: web, ips: [192.0.2.0/24], ports: [22, 443], proto: udp}\n", ""},
+		{"port out of range", "block:\n  - {name: web, ips: [192.0.2.0/24], ports: [70000]}\n", "out of range"},
+		{"duplicate port", "block:\n  - {name: web, ips: [192.0.2.0/24], ports: [22, 22]}\n", "duplicate port"},
+		{"proto without ports", "block:\n  - {name: web, ips: [192.0.2.0/24], proto: tcp}\n", "proto needs ports"},
+		{"bad proto", "block:\n  - {name: web, ips: [192.0.2.0/24], ports: [22], proto: icmp}\n", "tcp or udp"},
 		{"bad cache maxAge", "cache:\n  maxAge: soon\nblock: [ir]\n", "cache.maxAge"},
 		{"good cache maxAge", "cache:\n  dir: /var/cache/x\n  maxAge: 6h\nblock: [ir]\n", ""},
 	}
