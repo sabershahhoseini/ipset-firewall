@@ -29,7 +29,7 @@ type Mattermost struct {
 // Inventory of all routes in yaml config
 type Inventory struct {
 	IPSetRules  []Rule       `yaml:"rules"`
-	Allow       []string     `yaml:"allow"`
+	Allow       []BlockEntry `yaml:"allow"`
 	Block       []BlockEntry `yaml:"block"`
 	Mattermost  Mattermost   `yaml:"mattermost"`
 	Cache       CacheConfig  `yaml:"cache"`

@@ -21,6 +21,15 @@ func SetMirror(dir string, off bool) {
 	offline = off
 }
 
+// MirrorHas reports whether the mirror has a list for a code.
+func MirrorHas(countryCode string) bool {
+	if mirrorDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(mirrorDir, mirrorName(countryCode)))
+	return err == nil
+}
+
 // mirrorName is the file name used in the mirror for a country code or tor.
 func mirrorName(countryCode string) string {
 	return countryCode + ".txt"

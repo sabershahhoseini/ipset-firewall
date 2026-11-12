@@ -28,8 +28,8 @@ block:
     ips: [192.0.2.0/24]
     direction: dst
 `)
-	if len(inv.Allow) != 2 || inv.Allow[1] != "203.0.113.42" {
-		t.Fatalf("allow = %q", inv.Allow)
+	if addrs := inv.AllowAddresses(); len(addrs) != 2 || addrs[1] != "203.0.113.42" {
+		t.Fatalf("allow addresses = %q", addrs)
 	}
 	if len(inv.Block) != 2 {
 		t.Fatalf("block count = %d", len(inv.Block))
@@ -65,7 +65,9 @@ func TestValidate(t *testing.T) {
 		{"bad direction", "block:\n  - {name: a, ips: [1.2.3.4], direction: both}\n", "direction must be"},
 		{"duplicate set", "block: [ir, {name: ir, ips: [1.2.3.4]}]\n", "duplicate set name"},
 		{"long name", "block:\n  - {name: " + strings.Repeat("a", 30) + ", ips: [1.2.3.4]}\n", "longer than 31"},
-		{"bad allow", "allow: [not-an-ip]\nblock: [ir]\n", "invalid address"},
+		{"bad allow address", "allow: [1.2.3]\nblock: [ir]\n", "invalid address"},
+		{"bad allow code", "allow: [not/an/ip/really]\nblock: [ir]\n", "invalid network"},
+		{"path-like code refused", "block:\n  - {name: x, country: ../etc}\n", "invalid country code"},
 		{"bad allow cidr", "allow: [10.0.0.0/99]\nblock: [ir]\n", "invalid network"},
 		{"ipv6 allow", "allow: ['2001:db8::1']\nblock: [ir]\n", "IPv6 is not supported"},
 		{"ipv6 block ip", "block:\n  - {name: a, ips: ['2001:db8::/32']}\n", "IPv6 is not supported"},
@@ -111,5 +113,56 @@ func TestCanonicalAddr(t *testing.T) {
 	}
 	if _, err := CanonicalAddr("not-an-ip"); err == nil {
 		t.Error("CanonicalAddr accepted an invalid address")
+	}
+}
+
+func TestAllowAndBlockAcceptTheSameForms(t *testing.T) {
+	inv := parse(t, `
+allow:
+  - 203.0.113.42
+  - ir
+  - name: partners
+    ips: [198.51.100.0/24]
+    ports: [443]
+block:
+  - 192.0.2.7
+  - 192.0.2.0/28
+  - tor
+  - name: scanners
+    ips: [198.51.100.128/25]
+`)
+	if err := inv.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got := inv.AllowAddresses(); len(got) != 1 || got[0] != "203.0.113.42" {
+		t.Errorf("AllowAddresses = %q", got)
+	}
+	al := inv.AllowLists()
+	if len(al) != 2 || al[0].SetNameFor("allow") != "ir-allow" || al[1].SetNameFor("allow") != "partners-allow" || !al[1].IsPort() {
+		t.Errorf("AllowLists = %+v", al)
+	}
+	bl := inv.BlockLists()
+	if len(bl) != 3 {
+		t.Fatalf("BlockLists = %+v", bl)
+	}
+	if bl[0].SetName() != "tor-block" || bl[1].SetName() != "scanners-block" {
+		t.Errorf("block list names = %s, %s", bl[0].SetName(), bl[1].SetName())
+	}
+	if bl[2].SetName() != "addresses-block" || len(bl[2].IPs) != 2 {
+		t.Errorf("bare block addresses = %+v", bl[2])
+	}
+}
+
+func TestListInBothAllowAndBlockRefused(t *testing.T) {
+	err := parse(t, "allow: [ir]\nblock: [ir]\n").Validate()
+	if err == nil || !strings.Contains(err.Error(), "both allow and block") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestReservedAddressesName(t *testing.T) {
+	err := parse(t, "block:\n  - {name: addresses, ips: [192.0.2.1]}\n").Validate()
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("error = %v", err)
 	}
 }

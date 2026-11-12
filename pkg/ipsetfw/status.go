@@ -19,7 +19,19 @@ func readBlockAllowConfig(path string) (file.Inventory, error) {
 	return inv, inv.Validate()
 }
 
-// StatusConfig shows the live state of each block and the allow rules. It changes nothing and downloads nothing.
+// rulesPresent reports whether every rule of a list is in the chain.
+func rulesPresent(ipt *iptables.IPTables, l list) bool {
+	r := baseRule()
+	for _, args := range l.rules() {
+		if ok, err := ipt.Exists(r.Table, r.Chain, args...); err != nil || !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// StatusConfig shows the live state of each list and the allowed addresses. It changes nothing
+// and downloads nothing.
 func StatusConfig(path string, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	inv, err := readBlockAllowConfig(path)
@@ -39,22 +51,22 @@ func StatusConfig(path string, verbose bool) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("chain %s (table %s, from %s): %d allow rule(s)\n", r.Chain, r.Table, r.Parent, len(allows))
-	for _, b := range inv.Block {
-		name := b.SetName()
+	fmt.Printf("chain %s (table %s, from %s): %d allowed-address rule(s)\n", r.Chain, r.Table, r.Parent, len(allows))
+	for _, l := range listsOf(inv) {
+		name := l.setName()
 		live := "set missing"
 		if info, err := ipset.List(name); err == nil {
 			live = fmt.Sprintf("%d entries, %s", info.NumEntries, info.TypeName)
 		}
 		rule := "missing"
-		if ok, err := ipt.Exists(r.Table, r.Chain, blockMatchArgs(b, name)...); err == nil && ok {
+		if rulesPresent(ipt, l) {
 			rule = "ok"
 		}
 		updated := "never"
 		if bs, ok := st.Blocks[name]; ok {
 			updated = bs.Updated.Local().Format("2006-01-02 15:04") + " (" + bs.Source + ")"
 		}
-		fmt.Printf("block  %-14s %-18s %-26s rule %-8s updated %s\n", b.Name, name, live, rule, updated)
+		fmt.Printf("%-6s %-14s %-18s %-26s rule %-8s updated %s\n", l.kind, l.entry.Name, name, live, rule, updated)
 	}
 	return nil
 }
@@ -87,8 +99,8 @@ func VerifyConfig(path string, verbose bool) error {
 		return fmt.Errorf("%d problem(s) found", problems)
 	}
 
-	// Allow rules: exactly the configured addresses, as source and destination.
-	allows, err := canonicalAllows(inv.Allow)
+	// Allowed addresses: exactly the configured ones, as source and destination.
+	allows, err := canonicalAllows(inv.AllowAddresses())
 	if err != nil {
 		return err
 	}
@@ -118,51 +130,53 @@ func VerifyConfig(path string, verbose bool) error {
 		}
 	}
 
-	// Ordering: every allow must come before the first drop.
-	lastAllow, firstDrop := -1, -1
+	// Ordering: every ACCEPT rule must come before the first DROP rule.
+	lastAccept, firstDrop := -1, -1
 	for i, line := range lines {
 		if strings.HasSuffix(line, "-j ACCEPT") {
-			lastAllow = i
+			lastAccept = i
 		}
 		if strings.HasSuffix(line, "-j DROP") && firstDrop < 0 {
 			firstDrop = i
 		}
 	}
-	if firstDrop >= 0 && lastAllow > firstDrop {
+	if firstDrop >= 0 && lastAccept > firstDrop {
 		bad("an allow rule comes after a drop rule")
 	} else {
 		ok("allow rules come before drop rules")
 	}
 
-	// Block entries: set type and drop rule.
+	// Lists: set type and rules.
 	keep := map[string]bool{}
-	for _, b := range inv.Block {
-		name := b.SetName()
+	for _, l := range listsOf(inv) {
+		name := l.setName()
 		keep[name] = true
 		info, err := ipset.List(name)
 		if err != nil {
-			bad("set " + name + " missing")
-		} else if info.TypeName != setTypeOf(b) {
-			bad(fmt.Sprintf("set %s is %s, config wants %s", name, info.TypeName, setTypeOf(b)))
+			bad(l.kind + " set " + name + " missing")
+		} else if info.TypeName != setTypeOf(l.entry) {
+			bad(fmt.Sprintf("%s set %s is %s, config wants %s", l.kind, name, info.TypeName, setTypeOf(l.entry)))
 		} else {
-			ok(fmt.Sprintf("set %s (%s, %d entries)", name, info.TypeName, info.NumEntries))
+			ok(fmt.Sprintf("%s set %s (%s, %d entries)", l.kind, name, info.TypeName, info.NumEntries))
 		}
-		if exists, err := ipt.Exists(r.Table, r.Chain, blockMatchArgs(b, name)...); err != nil || !exists {
-			bad("drop rule for " + name + " missing")
-		} else {
-			ok("drop rule for " + name)
+		for _, args := range l.rules() {
+			if exists, err := ipt.Exists(r.Table, r.Chain, args...); err != nil || !exists {
+				bad(l.kind + " rule missing: " + strings.Join(args, " "))
+			} else {
+				ok(l.kind + " rule " + strings.Join(args, " "))
+			}
 		}
 	}
 
-	// Stale drop rules for block sets no longer in the config.
-	drops, err := dropRules(ipt, r)
+	// Rules for allow or block sets that are no longer in the config.
+	rules, err := setRules(ipt, r)
 	if err != nil {
 		return err
 	}
-	for _, f := range drops {
+	for _, f := range rules {
 		name := matchSetName(f)
-		if strings.HasSuffix(name, "-block") && !keep[name] {
-			bad("stale drop rule for " + name + " (not in config)")
+		if isListSet(name) && !keep[name] {
+			bad("stale rule for " + name + " (not in config)")
 		}
 	}
 

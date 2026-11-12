@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/lrh3321/ipset-go"
-	"github.com/sabershahhoseini/ipset-firewall/util/file"
 )
 
 // IP protocol numbers used in hash:net,port sets.
@@ -46,17 +45,6 @@ func portEntries(nets []string, ports []int, proto string) []ipset.Entry {
 		}
 	}
 	return entries
-}
-
-// blockMatchArgs is the one definition of a block's drop rule, without the chain name. Apply,
-// clear, status and verify all use it. A port block matches protocol and ports through the set:
-// src,dst (or dst,dst for direction dst).
-func blockMatchArgs(b file.BlockEntry, setName string) []string {
-	dir := b.DirectionOrDefault()
-	if b.IsPort() {
-		return []string{"-p", b.ProtoOrDefault(), "-m", "set", "--match-set", setName, dir + ",dst", "-j", "DROP"}
-	}
-	return []string{"-m", "set", "--match-set", setName, dir, "-j", "DROP"}
 }
 
 // joinPorts formats ports for messages, for example "22,443".

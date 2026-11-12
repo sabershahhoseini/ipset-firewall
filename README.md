@@ -119,6 +119,31 @@ block:
 * Invalid configs are refused before anything changes.
 * The older `rules:` format still works, but it can't be mixed with `block` or `allow`.
 
+### Allow lists
+
+`allow` takes the same forms as `block`: addresses, country codes, and named lists with `file`, `ips`, `direction`, `ports` and `proto`.
+
+```yaml
+allow:
+  - 203.0.113.42              # address
+  - ir                        # country: traffic from or to Iran is never blocked
+  - name: partners
+    file: [/etc/ipsetfw/partners.txt]
+  - name: web
+    ips: [198.51.100.0/24]
+    ports: [443]              # these networks may reach this host on 443, even if blocked
+block:
+  - 192.0.2.7                 # bare addresses go into one set: addresses-block
+  - tor
+```
+
+* Allow means "never block". It does not drop anything that isn't listed.
+* An allow list matches source and destination unless `direction` is set. Its sets are named `<name>-allow`, and its rules sit above every block rule.
+* A port allow matches traffic to that port. The rules in `raw` can't track connections, so replies to connections your host opens are not covered by a port allow.
+* If an allow list fails to update, the block lists are left unchanged for that run, so nothing you meant to allow gets blocked.
+* A list name can't be used in both `allow` and `block`, and the name `addresses` is reserved.
+* A country code must be two letters, `tor`, or have a `<code>.txt` file in the mirror. Anything else is refused before the firewall is changed.
+
 ### Port-scoped blocks
 
 Add `ports` to limit a block to some destination ports. The set is `hash:net,port`.

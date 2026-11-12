@@ -92,8 +92,8 @@ func setTypeOf(b file.BlockEntry) string {
 	return "hash:net"
 }
 
-// recordBlocks stores the state of blocks that were applied successfully, and drops
-// entries for blocks that are no longer in the config.
+// recordBlocks stores the state of lists (allow and block) that were applied successfully, and
+// drops entries for lists that are no longer in the config.
 func recordBlocks(inv file.Inventory, applied map[string]bool) error {
 	path := statePath(inv)
 	st, err := loadState(path)
@@ -101,8 +101,8 @@ func recordBlocks(inv file.Inventory, applied map[string]bool) error {
 		return err
 	}
 	keep := map[string]bool{}
-	for _, b := range inv.Block {
-		keep[b.SetName()] = true
+	for _, l := range listsOf(inv) {
+		keep[l.setName()] = true
 	}
 	for name := range st.Blocks {
 		if !keep[name] {
@@ -110,24 +110,24 @@ func recordBlocks(inv file.Inventory, applied map[string]bool) error {
 		}
 	}
 	now := time.Now().UTC()
-	for _, b := range inv.Block {
-		if !applied[b.SetName()] {
+	for _, l := range listsOf(inv) {
+		if !applied[l.setName()] {
 			continue
 		}
-		st.Blocks[b.SetName()] = blockState{Source: sourceText(b), Type: setTypeOf(b), Updated: now}
+		st.Blocks[l.setName()] = blockState{Source: sourceText(l.entry), Type: setTypeOf(l.entry), Updated: now}
 	}
 	return saveState(path, st)
 }
 
-// forgetBlocks removes the state of every block in the config (used by clear).
+// forgetBlocks removes the state of every list in the config (used by clear).
 func forgetBlocks(inv file.Inventory) error {
 	path := statePath(inv)
 	st, err := loadState(path)
 	if err != nil {
 		return err
 	}
-	for _, b := range inv.Block {
-		delete(st.Blocks, b.SetName())
+	for _, l := range listsOf(inv) {
+		delete(st.Blocks, l.setName())
 	}
 	return saveState(path, st)
 }

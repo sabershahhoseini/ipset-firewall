@@ -3,6 +3,7 @@ package file
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -16,18 +17,36 @@ type CacheConfig struct {
 // maxSetNameLen is ipset's limit on set names.
 const maxSetNameLen = 31
 
-// BlockEntry is one block list. It can be written as a bare country code
-// ("ir") or as a map with name, country, file, ips and direction.
+// AddressesName is the reserved list name that holds the bare addresses written in block.
+const AddressesName = "addresses"
+
+// codePattern is what a country or mirror code may contain. It keeps codes usable as file names.
+var codePattern = regexp.MustCompile(`^[a-z0-9_-]{2,20}$`)
+
+// namePattern is what a list name may contain. Its length is limited by the set name check.
+var namePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
+
+// BlockEntry is one entry of a block or allow list. It can be written as:
+//   - a bare address or network: "203.0.113.42", "10.0.0.0/8";
+//   - a bare country code (or "tor"): "ir";
+//   - a map with name, country, file, ips, direction, ports and proto.
 type BlockEntry struct {
 	Name      string   `yaml:"name"`
 	Country   string   `yaml:"country"`
 	File      []string `yaml:"file"`
 	IPs       []string `yaml:"ips"`
 	Direction string   `yaml:"direction"`
-	// Ports limits the block to these destination ports (hash:net,port set).
+	// Ports limits the entry to these destination ports (hash:net,port set).
 	Ports []int `yaml:"ports"`
 	// Proto is tcp or udp when Ports is set; default tcp.
 	Proto string `yaml:"proto"`
+	// Address is set when the entry was written as a bare address.
+	Address string `yaml:"-"`
+}
+
+// IsAddress reports whether the entry is a bare address rather than a list.
+func (b BlockEntry) IsAddress() bool {
+	return b.Address != ""
 }
 
 // IsPort reports whether the entry is limited to ports.
@@ -43,7 +62,7 @@ func (b BlockEntry) DirectionOrDefault() string {
 	return b.Direction
 }
 
-// ProtoOrDefault returns the protocol for a port block: tcp unless set.
+// ProtoOrDefault returns the protocol for a port entry: tcp unless set.
 func (b BlockEntry) ProtoOrDefault() string {
 	if b.Proto == "" {
 		return "tcp"
@@ -51,17 +70,31 @@ func (b BlockEntry) ProtoOrDefault() string {
 	return b.Proto
 }
 
-// SetName is the ipset name for the entry: <name>-block.
+// SetName is the ipset name of a block list: <name>-block.
 func (b BlockEntry) SetName() string {
-	return b.Name + "-block"
+	return b.SetNameFor("block")
 }
 
-// UnmarshalYAML accepts either a country code string or a full map.
+// SetNameFor is the ipset name of the list for a kind ("block" or "allow"): <name>-<kind>.
+func (b BlockEntry) SetNameFor(kind string) string {
+	return b.Name + "-" + kind
+}
+
+// looksLikeAddress reports whether a bare string is meant as an address rather than a code.
+func looksLikeAddress(s string) bool {
+	return strings.ContainsAny(s, ".:/")
+}
+
+// UnmarshalYAML accepts a bare address, a bare country code, or a full map.
 func (b *BlockEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var code string
-	if err := unmarshal(&code); err == nil {
-		b.Country = code
-		b.Name = strings.ToLower(code)
+	var s string
+	if err := unmarshal(&s); err == nil {
+		if looksLikeAddress(s) {
+			b.Address = s
+			return nil
+		}
+		b.Country = s
+		b.Name = strings.ToLower(s)
 		return nil
 	}
 	type plain BlockEntry
@@ -76,9 +109,49 @@ func (b *BlockEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
-// Validate checks a config before anything is changed. It rejects mixing the
-// old 'rules' format with 'block'/'allow', duplicate or over-long set names,
-// blocks with no source, bad directions, and bad addresses.
+// BlockLists returns the block lists, plus one list named "addresses" holding every bare
+// address written in block, if there are any.
+func (inv Inventory) BlockLists() []BlockEntry {
+	var lists []BlockEntry
+	var addrs []string
+	for _, b := range inv.Block {
+		if b.IsAddress() {
+			addrs = append(addrs, b.Address)
+			continue
+		}
+		lists = append(lists, b)
+	}
+	if len(addrs) > 0 {
+		lists = append(lists, BlockEntry{Name: AddressesName, IPs: addrs})
+	}
+	return lists
+}
+
+// AllowAddresses returns the bare addresses written in allow.
+func (inv Inventory) AllowAddresses() []string {
+	var addrs []string
+	for _, a := range inv.Allow {
+		if a.IsAddress() {
+			addrs = append(addrs, a.Address)
+		}
+	}
+	return addrs
+}
+
+// AllowLists returns the allow entries that are lists.
+func (inv Inventory) AllowLists() []BlockEntry {
+	var lists []BlockEntry
+	for _, a := range inv.Allow {
+		if !a.IsAddress() {
+			lists = append(lists, a)
+		}
+	}
+	return lists
+}
+
+// Validate checks a config before anything is changed. It rejects mixing the old 'rules'
+// format with 'block'/'allow', bad addresses and codes, lists with no source, bad directions
+// or ports, duplicate or over-long set names, and a list name used in both allow and block.
 func (inv Inventory) Validate() error {
 	if inv.Cache.MaxAge != "" {
 		if _, err := time.ParseDuration(inv.Cache.MaxAge); err != nil {
@@ -88,36 +161,70 @@ func (inv Inventory) Validate() error {
 	if (len(inv.Block) > 0 || len(inv.Allow) > 0) && len(inv.IPSetRules) > 0 {
 		return fmt.Errorf("config mixes 'rules' with 'block'/'allow'; use one format")
 	}
+	allowNames := map[string]bool{}
 	seen := map[string]bool{}
 	for _, a := range inv.Allow {
-		if err := checkAddress(a); err != nil {
-			return fmt.Errorf("allow: %w", err)
+		if a.IsAddress() {
+			if err := checkAddress(a.Address); err != nil {
+				return fmt.Errorf("allow: %w", err)
+			}
+			continue
 		}
-	}
-	for _, b := range inv.Block {
-		if b.Country == "" && len(b.File) == 0 && len(b.IPs) == 0 {
-			return fmt.Errorf("block %q has no source: set country, file or ips", b.Name)
-		}
-		switch b.Direction {
-		case "", "src", "dst":
-		default:
-			return fmt.Errorf("block %q: direction must be src or dst, got %q", b.Name, b.Direction)
-		}
-		if err := checkPorts(b); err != nil {
+		if err := checkList(a, "allow", seen); err != nil {
 			return err
 		}
-		setName := b.SetName()
-		if len(setName) > maxSetNameLen {
-			return fmt.Errorf("block %q: set name %q is longer than %d characters", b.Name, setName, maxSetNameLen)
-		}
-		if seen[setName] {
-			return fmt.Errorf("block %q: duplicate set name %q", b.Name, setName)
-		}
-		seen[setName] = true
-		for _, ip := range b.IPs {
-			if err := checkAddress(ip); err != nil {
-				return fmt.Errorf("block %q: %w", b.Name, err)
+		allowNames[a.Name] = true
+	}
+	for _, b := range inv.Block {
+		if b.IsAddress() {
+			if err := checkAddress(b.Address); err != nil {
+				return fmt.Errorf("block: %w", err)
 			}
+			continue
+		}
+		if b.Name == AddressesName {
+			return fmt.Errorf("block: the name %q is reserved for bare addresses", AddressesName)
+		}
+		if err := checkList(b, "block", seen); err != nil {
+			return err
+		}
+		if allowNames[b.Name] {
+			return fmt.Errorf("list %q is in both allow and block", b.Name)
+		}
+	}
+	return nil
+}
+
+// checkList validates one allow or block list and records its set name in seen.
+func checkList(b BlockEntry, kind string, seen map[string]bool) error {
+	if b.Country == "" && len(b.File) == 0 && len(b.IPs) == 0 {
+		return fmt.Errorf("%s %q has no source: set country, file or ips", kind, b.Name)
+	}
+	if b.Country != "" && !codePattern.MatchString(strings.ToLower(b.Country)) {
+		return fmt.Errorf("%s %q: invalid country code %q (use letters, digits, - or _)", kind, b.Name, b.Country)
+	}
+	if !namePattern.MatchString(b.Name) {
+		return fmt.Errorf("%s: invalid name %q (use lowercase letters, digits, - or _)", kind, b.Name)
+	}
+	switch b.Direction {
+	case "", "src", "dst":
+	default:
+		return fmt.Errorf("%s %q: direction must be src or dst, got %q", kind, b.Name, b.Direction)
+	}
+	if err := checkPorts(b, kind); err != nil {
+		return err
+	}
+	setName := b.SetNameFor(kind)
+	if len(setName) > maxSetNameLen {
+		return fmt.Errorf("%s %q: set name %q is longer than %d characters", kind, b.Name, setName, maxSetNameLen)
+	}
+	if seen[setName] {
+		return fmt.Errorf("%s %q: duplicate set name %q", kind, b.Name, setName)
+	}
+	seen[setName] = true
+	for _, ip := range b.IPs {
+		if err := checkAddress(ip); err != nil {
+			return fmt.Errorf("%s %q: %w", kind, b.Name, err)
 		}
 	}
 	return nil
@@ -140,23 +247,23 @@ func checkAddress(s string) error {
 	return nil
 }
 
-// checkPorts validates the ports and proto of a block entry.
-func checkPorts(b BlockEntry) error {
+// checkPorts validates the ports and proto of a list.
+func checkPorts(b BlockEntry, kind string) error {
 	if b.Proto != "" && !b.IsPort() {
-		return fmt.Errorf("block %q: proto needs ports", b.Name)
+		return fmt.Errorf("%s %q: proto needs ports", kind, b.Name)
 	}
 	switch b.Proto {
 	case "", "tcp", "udp":
 	default:
-		return fmt.Errorf("block %q: proto must be tcp or udp, got %q", b.Name, b.Proto)
+		return fmt.Errorf("%s %q: proto must be tcp or udp, got %q", kind, b.Name, b.Proto)
 	}
 	seen := map[int]bool{}
 	for _, p := range b.Ports {
 		if p < 1 || p > 65535 {
-			return fmt.Errorf("block %q: port %d out of range 1-65535", b.Name, p)
+			return fmt.Errorf("%s %q: port %d out of range 1-65535", kind, b.Name, p)
 		}
 		if seen[p] {
-			return fmt.Errorf("block %q: duplicate port %d", b.Name, p)
+			return fmt.Errorf("%s %q: duplicate port %d", kind, b.Name, p)
 		}
 		seen[p] = true
 	}
