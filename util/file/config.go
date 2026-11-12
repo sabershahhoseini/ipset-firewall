@@ -4,7 +4,14 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 )
+
+// CacheConfig controls the list cache. dir "off" disables it; maxAge is a Go duration such as "12h".
+type CacheConfig struct {
+	Dir    string `yaml:"dir"`
+	MaxAge string `yaml:"maxAge"`
+}
 
 // maxSetNameLen is ipset's limit on set names.
 const maxSetNameLen = 31
@@ -48,6 +55,11 @@ func (b *BlockEntry) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // old 'rules' format with 'block'/'allow', duplicate or over-long set names,
 // blocks with no source, bad directions, and bad addresses.
 func (inv Inventory) Validate() error {
+	if inv.Cache.MaxAge != "" {
+		if _, err := time.ParseDuration(inv.Cache.MaxAge); err != nil {
+			return fmt.Errorf("cache.maxAge: %w", err)
+		}
+	}
 	if (len(inv.Block) > 0 || len(inv.Allow) > 0) && len(inv.IPSetRules) > 0 {
 		return fmt.Errorf("config mixes 'rules' with 'block'/'allow'; use one format")
 	}

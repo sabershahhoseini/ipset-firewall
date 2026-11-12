@@ -187,6 +187,9 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	if err := inv.Validate(); err != nil {
 		return err
 	}
+	if err := configureCache(inv.Cache, false); err != nil {
+		return err
+	}
 	logFilePath := inv.LogFilePath
 	var mattermost file.Mattermost
 	if inv.Mattermost.Token != "" && inv.Mattermost.URL != "" {
@@ -273,6 +276,9 @@ func PlanConfig(path string, verbose bool) error {
 		return fmt.Errorf("-plan supports the block/allow format only")
 	}
 	if err := inv.Validate(); err != nil {
+		return err
+	}
+	if err := configureCache(inv.Cache, true); err != nil {
 		return err
 	}
 	r := baseRule()

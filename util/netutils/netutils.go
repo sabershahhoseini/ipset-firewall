@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
@@ -107,10 +108,26 @@ func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath 
 	return fetchFromSources(urls, verbose, logFilePath)
 }
 
-// fetchFromSources tries each URL in order and returns the first one that yields
-// at least one valid network. A transport error, a non-2xx status or an empty
-// result all count as failure and move on to the next URL.
+// fetchFromSources returns the list for the first source that works. Order:
+//  1. a fresh cached copy of any source (no network), unless Force is set;
+//  2. a live download from each source in order; success is stored in the cache;
+//  3. if every download fails, the cached copy of any source, whatever its age, with a warning.
+//
+// A transport error, a non-2xx status or an empty result counts as a failed download.
 func fetchFromSources(urls []string, verbose bool, logFilePath string) ([]string, error) {
+	if cacheOpts.Dir != "" && !cacheOpts.Force {
+		for _, url := range urls {
+			lines, age, ok := cachedLines(url)
+			if !ok || age >= cacheOpts.MaxAge {
+				continue
+			}
+			if list := MergeIPsToCIDRs(lines); len(list) > 0 {
+				logger.Log("Using cached list for "+url+" (age "+humanAge(age)+")", logFilePath, verbose)
+				return list, nil
+			}
+		}
+	}
+
 	var errs []string
 	for _, url := range urls {
 		lines, err := fetchURL(url, logFilePath, verbose)
@@ -123,7 +140,23 @@ func fetchFromSources(urls []string, verbose bool, logFilePath string) ([]string
 			errs = append(errs, "no valid networks from "+url)
 			continue
 		}
+		if err := storeLines(url, lines); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not cache "+url+": "+err.Error())
+		}
 		logger.Log("Using source "+url, logFilePath, verbose)
+		return list, nil
+	}
+
+	for _, url := range urls {
+		lines, age, ok := cachedLines(url)
+		if !ok {
+			continue
+		}
+		list := MergeIPsToCIDRs(lines)
+		if len(list) == 0 {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "warning: all sources failed; using cached list for %s (age %s)\n", url, humanAge(age))
 		return list, nil
 	}
 	return nil, fmt.Errorf("all sources failed: %s", strings.Join(errs, "; "))

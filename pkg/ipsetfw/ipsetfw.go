@@ -431,6 +431,9 @@ func LoopConfigFile(path string, iptables bool, verbose bool) error {
 	if newFormat(inventory) {
 		return applyBlockAllow(inventory, verbose)
 	}
+	if err := configureCache(inventory.Cache, false); err != nil {
+		return err
+	}
 	logFilePath := inventory.LogFilePath
 	var mattermost file.Mattermost
 	if inventory.Mattermost.Token != "" && inventory.Mattermost.URL != "" {

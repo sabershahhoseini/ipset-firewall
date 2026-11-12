@@ -32,6 +32,7 @@ type Inventory struct {
 	Allow       []string     `yaml:"allow"`
 	Block       []BlockEntry `yaml:"block"`
 	Mattermost  Mattermost   `yaml:"mattermost"`
+	Cache       CacheConfig  `yaml:"cache"`
 	LogFilePath string       `yaml:"logFile"`
 }
 

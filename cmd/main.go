@@ -30,8 +30,11 @@ func main() {
 	list := flag.Bool("list", false, "List sets")
 	config := flag.String("config", "", "Use yaml config file")
 	plan := flag.Bool("plan", false, "With -config: show what would be applied, change nothing")
+	force := flag.Bool("force", false, "Ignore fresh cached lists and download again")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
+	ipsetfw.ForceRefresh = *force
+	netutils.SetCacheOptions(netutils.CacheOptions{Dir: netutils.DefaultCacheDir, MaxAge: netutils.DefaultCacheMaxAge, Force: *force})
 
 	// Print example usage if no arguments are provided
 	if len(os.Args) <= 1 || *help {
@@ -42,6 +45,7 @@ Options:
 
 	-config		{PATH}			Read config from yaml file
 	-plan					with -config: show what would be applied, change nothing
+	-force					ignore fresh cached lists and download again
 	-country	{CODE}			set country code. is not case sensitive.
 	-set		{NAME}			name of ipset set
 	-check		{IP}			check if IP exists in specific country IP pool

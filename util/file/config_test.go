@@ -71,6 +71,8 @@ func TestValidate(t *testing.T) {
 		{"ipv6 block ip", "block:\n  - {name: a, ips: ['2001:db8::/32']}\n", "IPv6 is not supported"},
 		{"mixed with rules", "rules:\n  - country: ir\n    set: ir-block\nblock: [tor]\n", "mixes 'rules'"},
 		{"legacy only is fine", "rules:\n  - country: ir\n    set: ir-block\n", ""},
+		{"bad cache maxAge", "cache:\n  maxAge: soon\nblock: [ir]\n", "cache.maxAge"},
+		{"good cache maxAge", "cache:\n  dir: /var/cache/x\n  maxAge: 6h\nblock: [ir]\n", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
