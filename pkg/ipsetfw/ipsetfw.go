@@ -1,11 +1,13 @@
 package ipsetfw
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -255,16 +257,15 @@ func ListSet(setName string, verbose bool) {
 
 }
 
+// maxSetEntries is the ipset default maxelem for hash:net. The ipset-go
+// library cannot set a different value on create, so larger pools are refused.
+const maxSetEntries = 65536
+
 func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName string,
 	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
-	var countryCode string
-	var setName string
-	var notifMsg string
-	var notifyMattermost bool = false
-
-	countryCode = setModel.Country
-	setName = setModel.SetName
+	setName := setModel.SetName
+	countryCode := setModel.Country
 	tmpSetName := setName + "-tmp"
 	backupSetName := setName + "-bak"
 
@@ -276,76 +277,108 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName stri
 	}
 
 	hostname, err := os.Hostname()
-	checkerr.Fatal(err)
-	currentTime := time.Now()
-	timeStampFormatted := currentTime.Format("2006-01-02 15:04:05")
-
-	if mattermost.Token != "" && mattermost.URL != "" {
-		notifyMattermost = true
-	}
-
-	var notifMsgInfo string = timeStampFormatted + " HOST: " + hostname + " --- "
-	checkerr.Fatal(err)
-
-	err = createDefaultChain(rule.Chain, rule.Table)
 	if err != nil {
-		notifMsg = notifMsgInfo + "ERROR: Could not create chain " + chainName
-		if notifyMattermost {
-			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
-		}
-		checkerr.Fatal(err)
+		return err
 	}
+	notifyMattermost := mattermost.Token != "" && mattermost.URL != ""
+	notifMsgInfo := time.Now().Format("2006-01-02 15:04:05") + " HOST: " + hostname + " --- "
 
-	// Create a temporary set with new IP pool that we'll swap it with old set later
-	ipset.Create(tmpSetName, ipset.TypeHashNet, ipset.CreateOptions{})
-	ipset.Create(setName, ipset.TypeHashNet, ipset.CreateOptions{})
+	// fail reports the error to Mattermost (best effort) and returns it.
+	fail := func(msg string, err error) error {
+		if notifyMattermost {
+			notif.SendNotificationMattermost(notifMsgInfo+"ERROR: "+msg, mattermost.URL, mattermost.Token)
+		}
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+	// abort removes the temp set, then reports the failure. The live set is never touched on abort.
+	abort := func(msg string, err error) error {
+		_ = ipset.Destroy(tmpSetName)
+		return fail(msg, err)
+	}
 
 	ipListMerged := netutils.MergeIPsToCIDRs(ipList)
+	if len(ipListMerged) == 0 {
+		return fail("refusing to update set "+setName, errors.New("no valid networks"))
+	}
+	if len(ipListMerged) > maxSetEntries {
+		return fail("refusing to update set "+setName,
+			fmt.Errorf("%d entries exceeds ipset limit of %d", len(ipListMerged), maxSetEntries))
+	}
+
+	if err := createDefaultChain(rule.Chain, rule.Table); err != nil {
+		return fail("could not create chain "+rule.Chain, err)
+	}
+
+	// Remove a temp set left behind by an earlier failed run.
+	if err := ipset.Destroy(tmpSetName); err != nil && !errors.Is(err, syscall.ENOENT) {
+		return fail("could not remove stale temp set "+tmpSetName, err)
+	}
+
+	// Build the new pool in the temp set. The live set is only swapped once the temp set is complete.
+	if err := ipset.Create(tmpSetName, ipset.TypeHashNet, ipset.CreateOptions{}); err != nil {
+		return fail("could not create temp set "+tmpSetName, err)
+	}
 	for _, ip := range ipListMerged {
 		logger.Log("Adding "+ip, logFilePath, verbose)
 		entry := convertIPToEntry(ip)
-		ipset.Add(tmpSetName, &entry)
+		if err := ipset.Add(tmpSetName, &entry); err != nil {
+			return abort("could not add "+ip+" to "+tmpSetName, err)
+		}
+	}
+	tmpInfo, err := ipset.List(tmpSetName)
+	if err != nil {
+		return abort("could not read back temp set "+tmpSetName, err)
+	}
+	if int(tmpInfo.NumEntries) != len(ipListMerged) {
+		return abort("temp set "+tmpSetName+" has wrong entry count",
+			fmt.Errorf("got %d, want %d", tmpInfo.NumEntries, len(ipListMerged)))
 	}
 
-	sets, _ := ipset.List(backupSetName)
-	if sets == nil {
-		ipset.Create(backupSetName, ipset.TypeHashNet, ipset.CreateOptions{})
+	if err := ipset.Create(setName, ipset.TypeHashNet, ipset.CreateOptions{}); err != nil && !errors.Is(err, syscall.EEXIST) {
+		return abort("could not create set "+setName, err)
+	}
+
+	_, listErr := ipset.List(backupSetName)
+	if listErr != nil && !errors.Is(listErr, syscall.ENOENT) {
+		return abort("could not inspect backup set "+backupSetName, listErr)
+	}
+	if listErr != nil {
+		// First run: create the backup filled with the new entries, then swap the temp set in.
+		if err := ipset.Create(backupSetName, ipset.TypeHashNet, ipset.CreateOptions{}); err != nil {
+			return abort("could not create backup set "+backupSetName, err)
+		}
 		for _, ip := range ipListMerged {
 			entry := convertIPToEntry(ip)
-			ipset.Add(backupSetName, &entry)
+			if err := ipset.Add(backupSetName, &entry); err != nil {
+				_ = ipset.Destroy(backupSetName)
+				return abort("could not fill backup set "+backupSetName, err)
+			}
 		}
-		ipset.Swap(tmpSetName, setName)
+		if err := ipset.Swap(tmpSetName, setName); err != nil {
+			return abort("could not swap "+tmpSetName+" into "+setName, err)
+		}
 	} else {
-		ipset.Swap(setName, backupSetName)
-		ipset.Swap(tmpSetName, setName)
-	}
-	err = ipset.Destroy(tmpSetName)
-	if err != nil {
-		notifMsg = notifMsgInfo + "ERROR: Could not destroy temporary set " + tmpSetName
-		if notifyMattermost {
-			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+		if err := ipset.Swap(setName, backupSetName); err != nil {
+			return abort("could not rotate "+setName+" into "+backupSetName, err)
 		}
-		checkerr.Fatal(err)
+		if err := ipset.Swap(tmpSetName, setName); err != nil {
+			return abort("could not swap "+tmpSetName+" into "+setName, err)
+		}
+	}
+
+	if err := ipset.Destroy(tmpSetName); err != nil {
+		return fail("set "+setName+" was updated but temp set "+tmpSetName+" could not be removed", err)
 	}
 	if iptables {
-		err := addIptableRule(rule, setName, chainName, logFilePath, verbose)
-		if err != nil {
-			notifMsg = notifMsgInfo + "ERROR: Could not add rule for set: " + setName + " - chain: " + chainName
-			if notifyMattermost {
-				notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
-			}
-			checkerr.Fatal(err)
+		if err := addIptableRule(rule, setName, chainName, logFilePath, verbose); err != nil {
+			return fail("could not add iptables rule for set "+setName+" - chain "+chainName, err)
 		}
 	}
 
-	currentTime = time.Now()
-	timeStampFormatted = currentTime.Format("2006-01-02 15:04:05")
-
-	notifMsg = notifMsgInfo + "Successfully created set " + setName + " for country " +
-		countryCode + " with " + strconv.Itoa(len(ipList)) + " number of entries!"
-
-	fmt.Printf(notifMsg + "\n")
-	notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+	msg := notifMsgInfo + "Successfully created set " + setName + " for country " +
+		countryCode + " with " + strconv.Itoa(len(ipListMerged)) + " number of entries!"
+	fmt.Println(msg)
+	notif.SendNotificationMattermost(msg, mattermost.URL, mattermost.Token)
 	return nil
 }
 
@@ -395,7 +428,9 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			if failed {
 				continue
 			}
-			IPsetfw(ipListConcatenated, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose)
+			if err := IPsetfw(ipListConcatenated, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose); err != nil {
+				fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
+			}
 		} else {
 			fetched, err := netutils.FetchIPPool(*&set.Country, verbose, "", logFilePath)
 			if err != nil {
@@ -403,7 +438,9 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 				continue
 			}
 			ipList := includeExtraIPs(fetched, r.ExtraIPs)
-			IPsetfw(ipList, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose)
+			if err := IPsetfw(ipList, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose); err != nil {
+				fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
+			}
 		}
 	}
 }

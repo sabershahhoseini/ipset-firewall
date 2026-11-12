@@ -122,7 +122,7 @@ Check if IP exists in IR (Iran):
 	} else if *countryCode != "" && *setName != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)
-		ipsetfw.IPsetfw(ipList, set, *iptables, *chain, rule, file.Mattermost{}, "", *verbose)
+		checkerr.Fatal(ipsetfw.IPsetfw(ipList, set, *iptables, *chain, rule, file.Mattermost{}, "", *verbose))
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)
