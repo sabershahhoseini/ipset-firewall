@@ -1,41 +1,73 @@
-logFile: "./log.txt"
+# ipsetfw full reference config. Every option is shown; delete what you don't need.
+#
+#   ipsetfw -config ipsetfw.yml -plan      show what would change (changes nothing)
+#   ipsetfw -config ipsetfw.yml            apply (root)
+#   ipsetfw -config ipsetfw.yml -status    live state of every list
+#   ipsetfw -config ipsetfw.yml -verify    compare firewall with this file; exit 1 on differences
+#   ipsetfw -config ipsetfw.yml -clear     remove everything this file created
+#   extra flags: -force (ignore cache), -offline, -mirror DIR, -unattended, -only-timeout 60s, -v
+#
+# Every list entry (in allow, only and block) can be written as:
+#   - 203.0.113.42                 an address
+#   - 10.0.0.0/8                   a network
+#   - ir                           a country code (two letters) or tor
+#   - name: x                      a named list, with any of:
+#       country: ir                  fetch this country's list
+#       file: [/path/a.txt]          one address or network per line
+#       ips: [192.0.2.0/24]          addresses written here
+#       direction: src               src or dst (allow lists default to both)
+#       ports: [22, 443]             only these destination ports
+#       proto: tcp                   tcp (default) or udp, with ports
 
-# Uncomment if you want to use mattermost to notify logs
+logFile: /var/log/ipsetfw.log           # "" = no log file
+stateFile: /var/lib/ipsetfw/state.json  # last update of each list, used by -status
+
+# Notifications on success and failure. Failures to send only print a warning.
 #mattermost:
-#  url: "MATTERMOST_URL"
-#  token: "MATTERMOST_TOKEN"
+#  url: "https://mattermost.example.com"
+#  token: "TOKEN"
 
-# A list of rules containing country name to block and set name for ipset.
-# Every IP in a set is added to the block set. extraIPs are added to the set too,
-# so only list addresses here that you want blocked.
-# If iptables is defined, iptable rules are created too. Without a policy no rule is added.
-rules:
-  # Drop packets whose source is in Iran.
-  - country: "ir"
-    set: "ir-block"
-    iptables:
-      policy: "drop"
-      insert: 1
-      type:
-        - "src"
-      chain: "IPSET_FW"
-      table: "raw"
+# Downloaded lists are cached. A copy younger than maxAge is used without downloading;
+# if every source fails, the last copy is used.
+cache:
+  dir: /var/cache/ipsetfw               # "off" = no cache
+  maxAge: 12h
 
-  - country: tor
-    set: tor-block
-    iptables:
-      policy: drop
-      insert: 2
-      type:
-        - "src"
+mirror: /srv/ipsetfw/mirror             # <code>.txt files here are used before any download
+offline: false                          # true = never use the network (mirror and cache only)
 
-  # Example only: file is a list of network files to combine into one set.
-  # Uncomment and point these at real files before use.
-  #- file:
-  #  - /etc/ipsetfw/US-list.txt
-  #  - /etc/ipsetfw/DE-list.txt
-  #  country: us
-  #  set: us-block
-  #  iptables:
-  #    policy: accept
-  #    insert: 3
+# Never blocked. Accepted before any block rule, as source and destination.
+allow:
+  - 203.0.113.42                        # admin IP
+  - 10.0.0.0/8                          # private network
+  - name: partners
+    file: [/etc/ipsetfw/partners.txt]
+  - name: monitoring
+    ips: [192.0.2.10]
+    ports: [9100]                       # only the metrics port
+
+# Allow-only: inbound, only these (and allow) may connect; everything else is refused.
+# Remove this section to turn allow-only off. The first install asks you to type yes.
+only:
+  - ir
+  - name: office
+    ips: [198.51.100.0/24]
+onlyAction: drop                        # drop (silent) or reject (connection refused)
+
+# Dropped. Bare addresses are collected into one set: addresses-block.
+block:
+  - tor
+  - 192.0.2.66
+  - name: scanners
+    file: [/etc/ipsetfw/scanners.txt]
+    ips: [192.0.2.128/25]
+  - name: ssh-cn
+    country: cn
+    ports: [22]                         # block China on SSH only
+  - name: dns-abuse
+    ips: [198.51.100.128/25]
+    ports: [53]
+    proto: udp
+  - name: no-forward
+    ips: [203.0.113.0/25]
+    direction: dst                      # traffic TO these networks (routers)
