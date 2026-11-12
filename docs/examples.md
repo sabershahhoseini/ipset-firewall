@@ -14,6 +14,6 @@ Ready-to-use configs are in [`example-config/`](../example-config/). Each one ha
 | `08-handpicked.yml` | Single addresses and a list file, no countries |
 | `09-udp-and-router.yml` | Block UDP 53 from a network; stop forwarding to a network |
 | `10-everything.yml` | Every option in one file |
-| `full-config.yml` | Full reference: every option, with short comments |
+| `full-config.yml` | Reference, not a starting point: every option, with short comments |
 
-Before you apply any of them, run `ipsetfw -config <file> -plan`. Change the example addresses (203.0.113.42 and so on) to your own.
+Start from the example closest to what you want, not from `full-config.yml`. Before you apply any of them, run `ipsetfw -config <file> -plan`. Change the example addresses (203.0.113.42 and so on) to your own.

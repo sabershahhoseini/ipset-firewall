@@ -28,7 +28,7 @@ persist: true     # see scheduling-and-reboot.md
 hooks: {}         # see hooks.md
 ```
 
-`full-config.yml` in `example-config/` lists every key with a short comment. Start from it.
+Start from the [example configs](examples.md) closest to what you want. To look up a key, `full-config.yml` in `example-config/` lists every key with a short comment.
 
 ## Entries
 

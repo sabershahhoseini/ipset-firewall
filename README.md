@@ -5,12 +5,12 @@ Block or allow large IP pools, such as whole countries, using [ipset](https://ip
 ## Quick start
 
 ```sh
-ipsetfw -config full-config.yml -plan      # see what would change; changes nothing
-sudo ipsetfw -config full-config.yml       # apply
-sudo ipsetfw -config full-config.yml -verify
+ipsetfw -config 01-block-countries.yml -plan      # see what would change; changes nothing
+sudo ipsetfw -config 01-block-countries.yml       # apply
+sudo ipsetfw -config 01-block-countries.yml -verify
 ```
 
-Start from [`example-config/full-config.yml`](example-config/full-config.yml), which lists every option.
+Start from the closest of the [example configs](example-config/), then adjust it. See [examples](docs/examples.md) for what each one does.
 
 ## Docs
 
