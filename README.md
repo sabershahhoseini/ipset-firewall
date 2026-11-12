@@ -242,6 +242,14 @@ systemctl enable ipsetfw-restore.service      # with persist: true, restores the
 * Logs: `journalctl -u ipsetfw.service`. Next run: `systemctl list-timers ipsetfw.timer`.
 * Health check: `ipsetfw -config /etc/ipsetfw/ipsetfw.yml -verify` exits 1 if the live firewall has drifted from the config.
 
+### Run report
+
+Every apply ends with a one-line summary, for example `Summary: 1 updated, 4 unchanged, 0 failed`. The full report is saved as `last-run.json`, next to the state file. For each list it gives the status (`updated`, `unchanged`, `failed` or `skipped`), the entries, how many were added and removed, the source, and any error. It also records the allow-only state and whether anything changed.
+
+* A list counts as unchanged when its contents are the same as before, even if it was downloaded again.
+* An update message is printed (and sent to Mattermost) only for lists whose contents changed, and for failures.
+* `skipped` means the list was not attempted because an allow or only list failed first.
+
 ### Surviving a reboot
 
 ipset sets and iptables rules are lost at reboot. With `persist: true`, every apply saves a snapshot of this tool's sets and of its two chains (`IPSET_FW`, `IPSET_ONLY`) with their jumps. The snapshot goes to `persistDir`, default `/var/lib/ipsetfw/restore`, with mode 600. `ipsetfw -restore` puts it back without any network. `ipsetfw-restore.service` runs it at boot, before the network starts.

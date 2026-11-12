@@ -309,7 +309,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 		}
 	}
 
-	if err := replaceSet(setName, "hash:net", netEntries(ipListMerged), nil, logFilePath, verbose); err != nil {
+	if _, err := replaceSet(setName, "hash:net", netEntries(ipListMerged), nil, logFilePath, verbose); err != nil {
 		return fail("could not update set "+setName, err)
 	}
 
@@ -362,7 +362,7 @@ func LoopConfigFile(path string, iptables bool, verbose bool) error {
 		return err
 	}
 	if newFormat(inventory) {
-		return applyBlockAllow(inventory, verbose)
+		return applyBlockAllow(path, inventory, verbose)
 	}
 	if err := configureSources(inventory, false); err != nil {
 		return err

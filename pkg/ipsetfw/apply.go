@@ -241,19 +241,23 @@ func blockEntries(b file.BlockEntry, nets []string) []ipset.Entry {
 	return netEntries(nets)
 }
 
-// applyList updates one list's set and makes sure its rules are in the chain. Allow rules are
-// inserted at the top; block rules are appended, so they always come after every allow rule and
-// do not depend on other lists.
-func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFilePath string, verbose bool) error {
+// applyList updates one list's set and makes sure its rules are in the chain, and reports what
+// changed. Allow rules are inserted at the top; block rules are appended, so they always come
+// after every allow rule and do not depend on other lists. Mattermost hears about a list only
+// when its contents changed or it failed.
+func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFilePath string, verbose bool) (listReport, error) {
 	r := baseRule()
 	b := l.entry
 	name := l.setName()
+	rep := listReport{Kind: l.kind, Name: b.Name, Set: name, Source: sourceText(b), Type: setTypeOf(b)}
 	notifyOn := mattermost.Token != "" && mattermost.URL != ""
-	fail := func(msg string, err error) error {
+	fail := func(msg string, err error) (listReport, error) {
+		e := fmt.Errorf("%s: %w", msg, err)
+		rep.Status, rep.Error = "failed", e.Error()
 		if notifyOn {
-			notify(mattermost, msgPrefix()+"ERROR: "+msg+": "+err.Error())
+			notify(mattermost, msgPrefix()+"ERROR: "+e.Error())
 		}
-		return fmt.Errorf("%s: %w", msg, err)
+		return rep, e
 	}
 
 	list, err := blockSources(b, verbose, logFilePath)
@@ -266,7 +270,8 @@ func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFi
 	}
 	entries := blockEntries(b, nets)
 	onTypeChange := func() error { return deleteRulesForSet(ipt, r, name) }
-	if err := replaceSet(name, setTypeOf(b), entries, onTypeChange, logFilePath, verbose); err != nil {
+	change, err := replaceSet(name, setTypeOf(b), entries, onTypeChange, logFilePath, verbose)
+	if err != nil {
 		return fail("could not update set "+name, err)
 	}
 	for _, args := range l.rules() {
@@ -283,23 +288,43 @@ func applyList(ipt *iptables.IPTables, l list, mattermost file.Mattermost, logFi
 		}
 	}
 
-	msg := fmt.Sprintf("%sUpdated %s set %s (%s, %d entries) from %s", msgPrefix(), l.kind, name, setTypeOf(b), len(entries), sourceText(b))
-	fmt.Println(msg)
-	if notifyOn {
-		notify(mattermost, msg)
+	rep.Entries, rep.Added, rep.Removed = change.Total, change.Added, change.Removed
+	rep.Status = "unchanged"
+	if change.changed() {
+		rep.Status = "updated"
+		msg := fmt.Sprintf("%sUpdated %s set %s (%s, %d entries, +%d -%d) from %s",
+			msgPrefix(), l.kind, name, setTypeOf(b), change.Total, change.Added, change.Removed, sourceText(b))
+		fmt.Println(msg)
+		if notifyOn {
+			notify(mattermost, msg)
+		}
+	} else {
+		logger.Log(fmt.Sprintf("Set %s unchanged (%d entries)", name, change.Total), logFilePath, verbose)
 	}
-	return nil
+	return rep, nil
+}
+
+// skipped marks lists that were not attempted because an earlier list failed.
+func skipped(lists []list, why string) []listReport {
+	var out []listReport
+	for _, l := range lists {
+		out = append(out, listReport{Kind: l.kind, Name: l.entry.Name, Set: l.setName(), Source: sourceText(l.entry),
+			Type: setTypeOf(l.entry), Status: "skipped", Error: why})
+	}
+	return out
 }
 
 // applyBlockAllow applies a block/allow config: allowed addresses and allow lists at the top, then
-// one set and drop rule per block list. A failing block list is reported and skipped; the others
-// still run. A failing allow list stops the run before any block list is changed.
-func applyBlockAllow(inv file.Inventory, verbose bool) error {
+// allow-only, then one set and drop rule per block list. A failing block list is reported and
+// skipped; the others still run. A failing allow or only list stops the run before allow-only
+// and the block lists are changed. Every run ends with a summary and a saved report.
+func applyBlockAllow(path string, inv file.Inventory, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	if err := inv.Validate(); err != nil {
 		return err
 	}
-	runErr := applyBlockAllowRun(inv, verbose)
+	rep := newReport("apply", path)
+	runErr := applyBlockAllowRun(inv, rep, verbose)
 	if inv.Persist {
 		if ipt, err := iptables.New(); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: could not save snapshot: "+err.Error())
@@ -307,15 +332,17 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 			fmt.Fprintln(os.Stderr, "warning: could not save snapshot: "+err.Error())
 		}
 	}
+	rep.finish(runErr)
+	fmt.Println(msgPrefix() + "Summary: " + rep.summary())
+	logger.Log("Summary: "+rep.summary(), inv.LogFilePath, false)
+	if err := rep.save(reportPath(inv)); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not save report: "+err.Error())
+	}
 	return runErr
 }
 
-// applyBlockAllowRun does the work of applyBlockAllow.
-func applyBlockAllowRun(inv file.Inventory, verbose bool) error {
-	usermgmt.ExitIfNotRoot()
-	if err := inv.Validate(); err != nil {
-		return err
-	}
+// applyBlockAllowRun does the work of applyBlockAllow and fills in rep.
+func applyBlockAllowRun(inv file.Inventory, rep *runReport, verbose bool) error {
 	if err := configureSources(inv, false); err != nil {
 		return err
 	}
@@ -348,44 +375,49 @@ func applyBlockAllowRun(inv file.Inventory, verbose bool) error {
 
 	var failed []string
 	applied := map[string]bool{}
-	for _, l := range allowListsOf(inv) {
-		if err := applyList(ipt, l, mattermost, logFilePath, verbose); err != nil {
-			fmt.Fprintln(os.Stderr, "allow "+l.entry.Name+" not updated: "+err.Error())
-			failed = append(failed, "allow "+l.entry.Name)
-			continue
+	run := func(l list) {
+		lr, err := applyList(ipt, l, mattermost, logFilePath, verbose)
+		rep.Lists = append(rep.Lists, lr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, l.kind+" "+l.entry.Name+" not updated: "+err.Error())
+			failed = append(failed, l.kind+" "+l.entry.Name)
+			return
 		}
 		applied[l.setName()] = true
 	}
-	// A failed allow list could leave traffic meant to be allowed exposed to new block rules, so
-	// block lists are only changed when every allow list is in place.
-	if len(failed) > 0 {
+	stop := func(why string, rest ...[]list) error {
+		for _, ls := range rest {
+			rep.Lists = append(rep.Lists, skipped(ls, why)...)
+		}
 		if err := recordBlocks(inv, applied); err != nil {
 			fmt.Fprintln(os.Stderr, "warning: could not write state file: "+err.Error())
 		}
-		return fmt.Errorf("%d list(s) not updated: %s; block lists left unchanged", len(failed), strings.Join(failed, ", "))
+		return fmt.Errorf("%d list(s) not updated: %s; %s", len(failed), strings.Join(failed, ", "), why)
 	}
 
-	for _, l := range onlyListsOf(inv) {
-		if err := applyList(ipt, l, mattermost, logFilePath, verbose); err != nil {
-			fmt.Fprintln(os.Stderr, "only "+l.entry.Name+" not updated: "+err.Error())
-			failed = append(failed, "only "+l.entry.Name)
-			continue
-		}
-		applied[l.setName()] = true
+	for _, l := range allowListsOf(inv) {
+		run(l)
 	}
-	// Like allow lists: allow-only and the block lists are only changed when every only list is in place.
+	// A failed allow list could leave traffic meant to be allowed exposed to new rules, so
+	// allow-only and the block lists are only changed when every allow list is in place.
 	if len(failed) > 0 {
-		if err := recordBlocks(inv, applied); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: could not write state file: "+err.Error())
-		}
-		return fmt.Errorf("%d list(s) not updated: %s; allow-only and block lists left unchanged", len(failed), strings.Join(failed, ", "))
+		return stop("allow-only and block lists left unchanged", onlyListsOf(inv), blockListsOf(inv))
 	}
-	if err := applyOnly(ipt, inv); err != nil {
+	for _, l := range onlyListsOf(inv) {
+		run(l)
+	}
+	if len(failed) > 0 {
+		return stop("allow-only and block lists left unchanged", blockListsOf(inv))
+	}
+	state, changed, err := applyOnly(ipt, inv)
+	if err != nil {
+		rep.Lists = append(rep.Lists, skipped(blockListsOf(inv), "allow-only failed")...)
 		if rerr := recordBlocks(inv, applied); rerr != nil {
 			fmt.Fprintln(os.Stderr, "warning: could not write state file: "+rerr.Error())
 		}
 		return fmt.Errorf("%w; block lists left unchanged", err)
 	}
+	rep.AllowOnly, rep.AllowOnlyChanged = state, changed
 
 	keep := map[string]bool{}
 	for _, l := range listsOf(inv) {
@@ -395,17 +427,13 @@ func applyBlockAllowRun(inv file.Inventory, verbose bool) error {
 	if err != nil {
 		return err
 	}
+	rep.StaleRemoved = stale
 	for _, name := range stale {
 		fmt.Fprintln(os.Stderr, "removed rules for "+name+" (no longer in config); set kept, destroy it with: ipset destroy "+name)
 	}
 
 	for _, l := range blockListsOf(inv) {
-		if err := applyList(ipt, l, mattermost, logFilePath, verbose); err != nil {
-			fmt.Fprintln(os.Stderr, "block "+l.entry.Name+" not updated: "+err.Error())
-			failed = append(failed, "block "+l.entry.Name)
-			continue
-		}
-		applied[l.setName()] = true
+		run(l)
 	}
 	if err := recordBlocks(inv, applied); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: could not write state file: "+err.Error())

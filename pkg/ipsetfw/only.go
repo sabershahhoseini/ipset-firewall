@@ -206,57 +206,73 @@ func onlyPrecheck(ipt *iptables.IPTables, inv file.Inventory) error {
 // and INPUT is pointed at it before the old one is removed, so there is no moment without it.
 // It refuses when a current SSH client would be cut off. A first install must be confirmed
 // unless -unattended is set; if it is not confirmed, it is removed again.
-func applyOnly(ipt *iptables.IPTables, inv file.Inventory) error {
+// It returns the allow-only state (off, active or removed) and whether the chain changed.
+func applyOnly(ipt *iptables.IPTables, inv file.Inventory) (string, bool, error) {
 	installed, err := onlyInstalled(ipt)
 	if err != nil {
-		return err
+		return "", false, err
+	}
+	before, err := chainRules(ipt, onlyTable, onlyChain)
+	if err != nil {
+		return "", false, err
 	}
 	if len(inv.Only) == 0 {
+		if err := removeOnly(ipt); err != nil {
+			return "", false, err
+		}
 		if installed {
 			fmt.Println("Allow-only removed (no longer in config)")
+			return "removed", true, nil
 		}
-		return removeOnly(ipt)
+		return "off", false, nil
 	}
 	if bad := cutOffClients(inv, kernelInSet); len(bad) > 0 {
-		return fmt.Errorf("refusing allow-only: it would cut off SSH client %s; add it to allow or only", describeClients(bad))
+		return "", false, fmt.Errorf("refusing allow-only: it would cut off SSH client %s; add it to allow or only", describeClients(bad))
 	}
 	rules, err := onlyRules(inv)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 
 	if err := destroyChain(ipt, onlyNew); err != nil {
-		return err
+		return "", false, err
 	}
 	if err := ipt.NewChain(onlyTable, onlyNew); err != nil {
-		return err
+		return "", false, err
 	}
 	for _, r := range rules {
 		if err := ipt.Append(onlyTable, onlyNew, r...); err != nil {
 			_ = destroyChain(ipt, onlyNew)
-			return fmt.Errorf("building %s: %w", onlyChain, err)
+			return "", false, fmt.Errorf("building %s: %w", onlyChain, err)
 		}
 	}
 	// Point INPUT at the new chain first, then remove the old chain, then rename.
 	if err := ipt.Insert(onlyTable, onlyParent, 1, "-j", onlyNew); err != nil {
 		_ = destroyChain(ipt, onlyNew)
-		return err
+		return "", false, err
 	}
 	if err := destroyChain(ipt, onlyChain); err != nil {
-		return err
+		return "", false, err
 	}
 	if err := ipt.RenameChain(onlyTable, onlyNew, onlyChain); err != nil {
-		return err
+		return "", false, err
 	}
 
 	if !installed && !OnlyUnattended && !confirmOnly(OnlyTimeout) {
 		if err := removeOnly(ipt); err != nil {
-			return fmt.Errorf("allow-only was not confirmed, and removing it failed: %w", err)
+			return "", false, fmt.Errorf("allow-only was not confirmed, and removing it failed: %w", err)
 		}
-		return errors.New("allow-only was not confirmed and has been removed")
+		return "", false, errors.New("allow-only was not confirmed and has been removed")
 	}
-	fmt.Printf("Allow-only active: inbound connections not allowed are %s\n", onlyActionPast(inv))
-	return nil
+	after, err := chainRules(ipt, onlyTable, onlyChain)
+	if err != nil {
+		return "", false, err
+	}
+	changed := !installed || strings.Join(before, "\n") != strings.Join(after, "\n")
+	if changed {
+		fmt.Printf("Allow-only active: inbound connections not allowed are %s\n", onlyActionPast(inv))
+	}
+	return "active", changed, nil
 }
 
 // onlyActionPast is the action in past tense, for messages: "dropped" or "rejected".
