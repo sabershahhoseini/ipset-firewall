@@ -91,7 +91,7 @@ ipsetfw -config ipsetfw.yml -clear -v
 
 ### Notes
 
-* Country lists come from [ipdeny.com](https://www.ipdeny.com/ipblocks/) and fall back to [ipverse/rir-ip](https://github.com/ipverse/rir-ip) (CC0) if that fails. Tor exit nodes come from SecOps-Institute and fall back to the Tor Project's bulk exit list. Sources are tried in order, and an empty result counts as a failure.
+* Country lists come from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (CC0, updated daily) and fall back to [ipdeny.com](https://www.ipdeny.com/ipblocks/). Tor exit nodes come from the [Tor Project bulk exit list](https://check.torproject.org/torbulkexitlist) and fall back to [SecOps-Institute/Tor-IP-Addresses](https://github.com/SecOps-Institute/Tor-IP-Addresses). Sources are tried in order, and an empty result counts as a failure.
 * IPv6 entries are skipped. Only IPv4 addresses and networks are used.
 * Invalid lines in a file are skipped, and blank lines are ignored.
 * If a list cannot be downloaded, is empty, or has more than 65536 entries, the existing set is left unchanged and the error is reported.

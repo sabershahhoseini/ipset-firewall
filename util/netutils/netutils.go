@@ -15,17 +15,23 @@ import (
 )
 
 // CountrySources are tried in order for a country code. COUNTRY_CODE is replaced
-// with the lowercase code. Both serve one IPv4 network per line (plus comments
-// that are skipped as invalid).
+// with the lowercase code.
+//   - ipverse/country-ip-blocks: CC0, RIR-derived, committed daily.
+//   - ipdeny.com: free to use, commercial use allowed by its TOS, rate limited to
+//     5000 downloads/day/IP. Used only as a fallback.
+//
+// Comment lines in the ipverse files are not valid networks and are skipped.
 var CountrySources = []string{
+	"https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/COUNTRY_CODE/ipv4-aggregated.txt",
 	"https://www.ipdeny.com/ipblocks/data/countries/COUNTRY_CODE.zone",
-	"https://raw.githubusercontent.com/ipverse/rir-ip/master/country/COUNTRY_CODE/ipv4-aggregated.txt",
 }
 
 // TorSources are tried in order for the tor exit node list.
+//   - check.torproject.org: the Tor Project's own bulk exit list.
+//   - SecOps-Institute: community mirror of the same data.
 var TorSources = []string{
-	"https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst",
 	"https://check.torproject.org/torbulkexitlist",
+	"https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst",
 }
 
 func IsCIDRValid(ip string) (string, bool) {
