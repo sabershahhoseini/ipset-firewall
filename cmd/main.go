@@ -31,10 +31,15 @@ func main() {
 	config := flag.String("config", "", "Use yaml config file")
 	plan := flag.Bool("plan", false, "With -config: show what would be applied, change nothing")
 	force := flag.Bool("force", false, "Ignore fresh cached lists and download again")
+	mirror := flag.String("mirror", "", "Directory of <code>.txt lists to use before any download")
+	offlineFlag := flag.Bool("offline", false, "Never touch the network; use the mirror and cache only")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
 	ipsetfw.ForceRefresh = *force
+	ipsetfw.MirrorFlag = *mirror
+	ipsetfw.OfflineFlag = *offlineFlag
 	netutils.SetCacheOptions(netutils.CacheOptions{Dir: netutils.DefaultCacheDir, MaxAge: netutils.DefaultCacheMaxAge, Force: *force})
+	netutils.SetMirror(*mirror, *offlineFlag)
 
 	// Print example usage if no arguments are provided
 	if len(os.Args) <= 1 || *help {
@@ -46,6 +51,8 @@ Options:
 	-config		{PATH}			Read config from yaml file
 	-plan					with -config: show what would be applied, change nothing
 	-force					ignore fresh cached lists and download again
+	-mirror		{DIR}			use <code>.txt files in DIR before any download
+	-offline				never touch the network; mirror and cache only
 	-country	{CODE}			set country code. is not case sensitive.
 	-set		{NAME}			name of ipset set
 	-check		{IP}			check if IP exists in specific country IP pool

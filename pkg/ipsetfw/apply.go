@@ -187,7 +187,7 @@ func applyBlockAllow(inv file.Inventory, verbose bool) error {
 	if err := inv.Validate(); err != nil {
 		return err
 	}
-	if err := configureCache(inv.Cache, false); err != nil {
+	if err := configureSources(inv, false); err != nil {
 		return err
 	}
 	logFilePath := inv.LogFilePath
@@ -278,7 +278,7 @@ func PlanConfig(path string, verbose bool) error {
 	if err := inv.Validate(); err != nil {
 		return err
 	}
-	if err := configureCache(inv.Cache, true); err != nil {
+	if err := configureSources(inv, true); err != nil {
 		return err
 	}
 	r := baseRule()

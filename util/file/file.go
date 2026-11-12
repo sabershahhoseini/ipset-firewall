@@ -33,6 +33,8 @@ type Inventory struct {
 	Block       []BlockEntry `yaml:"block"`
 	Mattermost  Mattermost   `yaml:"mattermost"`
 	Cache       CacheConfig  `yaml:"cache"`
+	Mirror      string       `yaml:"mirror"`
+	Offline     bool         `yaml:"offline"`
 	LogFilePath string       `yaml:"logFile"`
 }
 

@@ -10,6 +10,26 @@ import (
 // ForceRefresh is set by -force: fresh cached lists are ignored and downloaded again.
 var ForceRefresh bool
 
+// MirrorFlag and OfflineFlag are set by -mirror and -offline. A config value takes precedence.
+var (
+	MirrorFlag  string
+	OfflineFlag bool
+)
+
+// configureSources applies the cache and mirror settings of a config. off disables the
+// cache and keeps the mirror read-only (used by -plan).
+func configureSources(inv file.Inventory, off bool) error {
+	if err := configureCache(inv.Cache, off); err != nil {
+		return err
+	}
+	mirror := MirrorFlag
+	if inv.Mirror != "" {
+		mirror = inv.Mirror
+	}
+	netutils.SetMirror(mirror, inv.Offline || OfflineFlag)
+	return nil
+}
+
 // configureCache applies the cache section of a config. off disables reads and writes
 // (used by -plan, which must not change anything).
 func configureCache(c file.CacheConfig, off bool) error {

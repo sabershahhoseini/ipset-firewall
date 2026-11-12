@@ -97,6 +97,13 @@ func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath 
 		return list, nil
 	}
 
+	if list, ok, err := fromMirror(countryCode); err != nil {
+		return nil, err
+	} else if ok {
+		logger.Log("Using mirror file for "+countryCode, logFilePath, verbose)
+		return list, nil
+	}
+
 	sources := CountrySources
 	if countryCode == "tor" {
 		sources = TorSources
@@ -130,6 +137,9 @@ func fetchFromSources(urls []string, verbose bool, logFilePath string) ([]string
 
 	var errs []string
 	for _, url := range urls {
+		if offline {
+			break
+		}
 		lines, err := fetchURL(url, logFilePath, verbose)
 		if err != nil {
 			errs = append(errs, err.Error())
@@ -158,6 +168,9 @@ func fetchFromSources(urls []string, verbose bool, logFilePath string) ([]string
 		}
 		fmt.Fprintf(os.Stderr, "warning: all sources failed; using cached list for %s (age %s)\n", url, humanAge(age))
 		return list, nil
+	}
+	if offline {
+		return nil, fmt.Errorf("offline mode: no mirror file or cached copy for %s", urls[0])
 	}
 	return nil, fmt.Errorf("all sources failed: %s", strings.Join(errs, "; "))
 }
