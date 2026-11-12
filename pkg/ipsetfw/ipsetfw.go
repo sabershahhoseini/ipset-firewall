@@ -14,6 +14,7 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/models"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
+	"github.com/sabershahhoseini/ipset-firewall/util/ipsetcli"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
 	"github.com/sabershahhoseini/ipset-firewall/util/notif"
@@ -271,10 +272,6 @@ func ListSet(setName string, verbose bool) {
 
 }
 
-// maxSetEntries is the ipset default maxelem for hash:net. The ipset-go
-// library cannot set a different value on create, so larger pools are refused.
-const maxSetEntries = 65536
-
 func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
 	setName := setModel.SetName
@@ -315,10 +312,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	if len(ipListMerged) == 0 {
 		return fail("refusing to update set "+setName, errors.New("no valid networks"))
 	}
-	if len(ipListMerged) > maxSetEntries {
-		return fail("refusing to update set "+setName,
-			fmt.Errorf("%d entries exceeds ipset limit of %d", len(ipListMerged), maxSetEntries))
-	}
+	maxElem := ipsetcli.MaxElemFor(len(ipListMerged))
 
 	if iptables && !isBuiltinChain(rule.Chain) {
 		if err := createDefaultChain(rule.Chain, rule.Table); err != nil {
@@ -332,7 +326,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	}
 
 	// Build the new pool in the temp set. The live set is only swapped once the temp set is complete.
-	if err := ipset.Create(tmpSetName, ipset.TypeHashNet, ipset.CreateOptions{}); err != nil {
+	if err := ipsetcli.CreateHashNetSet(tmpSetName, maxElem, false); err != nil {
 		return fail("could not create temp set "+tmpSetName, err)
 	}
 	for _, ip := range ipListMerged {
@@ -351,7 +345,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 			fmt.Errorf("got %d, want %d", tmpInfo.NumEntries, len(ipListMerged)))
 	}
 
-	if err := ipset.Create(setName, ipset.TypeHashNet, ipset.CreateOptions{}); err != nil && !errors.Is(err, syscall.EEXIST) {
+	if err := ipsetcli.CreateHashNetSet(setName, maxElem, true); err != nil {
 		return abort("could not create set "+setName, err)
 	}
 
@@ -361,7 +355,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	}
 	if listErr != nil {
 		// First run: create the backup filled with the new entries, then swap the temp set in.
-		if err := ipset.Create(backupSetName, ipset.TypeHashNet, ipset.CreateOptions{}); err != nil {
+		if err := ipsetcli.CreateHashNetSet(backupSetName, maxElem, false); err != nil {
 			return abort("could not create backup set "+backupSetName, err)
 		}
 		for _, ip := range ipListMerged {

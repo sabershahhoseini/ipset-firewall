@@ -97,4 +97,5 @@ ipsetfw -config ipsetfw.yml -clear -v
 * If a list cannot be downloaded, is empty, or has more than 65536 entries, the existing set is left unchanged and the error is reported.
 * A config rule can set `parent` under `iptables:` to choose the chain the jump comes from. By default it is `PREROUTING` for table `raw` and `INPUT` otherwise.
 * In a config file, a failing rule is reported and the remaining rules still run.
+* Sets larger than 65536 entries are created with the `ipset` command, which must be installed. Sets up to that size need only the kernel.
 * Every entry in a set is matched the same way. `extraIPs` are added to the set, so listing a private range there blocks it too. Do not add them to a block set unless you mean to block them.
