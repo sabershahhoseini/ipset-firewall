@@ -108,6 +108,10 @@ Check if IP exists in IR (Iran):
 		Chain:  *chain,
 	}
 	if *export {
+		if *filePath == "" {
+			fmt.Fprintln(os.Stderr, "-export requires -file")
+			os.Exit(1)
+		}
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, "", "")
 		checkerr.Fatal(err)
 		file.ExportToFile(*filePath, ipList, *verbose)
@@ -130,5 +134,8 @@ Check if IP exists in IR (Iran):
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)
 		netutils.CheckIPExistsInPool(ipList, *checkIP, *verbose)
+	} else {
+		fmt.Fprintln(os.Stderr, "invalid or incomplete arguments, use -help")
+		os.Exit(1)
 	}
 }

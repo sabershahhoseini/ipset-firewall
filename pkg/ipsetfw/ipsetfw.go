@@ -198,22 +198,6 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, logFi
 	return nil
 }
 
-func convertIPListToRestoreFile(ipList []string, prefixString string, logFilePath string, verbose bool) []string {
-	var convertedIpList []string
-	for _, ip := range ipList {
-		tmpIP, isValid := netutils.IsCIDRValid(ip)
-		if !isValid {
-			continue
-		}
-		ip = tmpIP
-		if verbose {
-			logger.Log("Adding "+ip, logFilePath, verbose)
-		}
-		convertedIpList = append(convertedIpList, prefixString+" "+ip)
-	}
-	return convertedIpList
-}
-
 func includeExtraIPs(ipList []string, extraIPs []string) []string {
 	for _, ip := range extraIPs {
 		ipList = append(ipList, ip)

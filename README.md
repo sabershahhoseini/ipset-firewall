@@ -88,3 +88,11 @@ If you want to clear everything setup by config file, just run:
 ```
 ipsetfw -config ipsetfw.yml -clear -v
 ```
+
+### Notes
+
+* IPv6 entries are skipped. Only IPv4 addresses and networks are used.
+* Invalid lines in a file are skipped, and blank lines are ignored.
+* If a list cannot be downloaded, is empty, or has more than 65536 entries, the existing set is left unchanged and the error is reported.
+* A config rule can set `parent` under `iptables:` to choose the chain the jump comes from. By default it is `PREROUTING` for table `raw` and `INPUT` otherwise.
+* In a config file, a failing rule is reported and the remaining rules still run.
