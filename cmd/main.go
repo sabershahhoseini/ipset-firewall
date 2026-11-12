@@ -20,7 +20,7 @@ func main() {
 	setName := flag.String("set", "", "ipset set name")
 	checkIP := flag.String("check", "", "Check IP exists in pool")
 	iptablesPolicy := flag.String("policy", "", "iptables policy (accept or drop)")
-	filePath := flag.String("file", "", "Get list from file instead of github")
+	filePath := flag.String("file", "", "Get list from file instead of the remote sources")
 	iptables := flag.Bool("iptables", false, "Add iptable rules")
 	chain := flag.String("chain", "", "iptables chain to add rules to (defaults to IPSET_FW)")
 	verbose := flag.Bool("v", false, "Verbose mode")
@@ -44,7 +44,7 @@ Options:
 	-set		{NAME}			name of ipset set
 	-check		{IP}			check if IP exists in specific country IP pool
 
-	-file		{PATH}			file path to read networks from (by default, it will be fetched from github)
+	-file		{PATH}			file path to read networks from (by default, it is fetched from the sources in util/netutils)
 	-export					export to file. works with -file and -country
 
 	-iptables				setup iptables rules
@@ -89,7 +89,7 @@ Create a set of Iran IP pool and block IPs from Iran by adding iptables rule:
 Create a set of Iran IP pool and accpet IPs from Iran by adding iptable rules with verbose mode:
 	ipsetfw -country IR -set set -iptables -policy accept -v
 
-Fetch github and export Iran IP pool:
+Fetch the Iran IP pool and export it:
 	ipsetfw -country ir -export -file /tmp/list-export.txt -v
 
 Create a set of Iran IP pool and accpet IPs from Iran from file:

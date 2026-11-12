@@ -14,8 +14,19 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 )
 
-const GeoURL string = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/COUNTRY_CODE.cidr"
-const TorURL string = "https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst"
+// CountrySources are tried in order for a country code. COUNTRY_CODE is replaced
+// with the lowercase code. Both serve one IPv4 network per line (plus comments
+// that are skipped as invalid).
+var CountrySources = []string{
+	"https://www.ipdeny.com/ipblocks/data/countries/COUNTRY_CODE.zone",
+	"https://raw.githubusercontent.com/ipverse/rir-ip/master/country/COUNTRY_CODE/ipv4-aggregated.txt",
+}
+
+// TorSources are tried in order for the tor exit node list.
+var TorSources = []string{
+	"https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst",
+	"https://check.torproject.org/torbulkexitlist",
+}
 
 func IsCIDRValid(ip string) (string, bool) {
 	_, _, err := net.ParseCIDR(ip)
@@ -61,45 +72,55 @@ func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 }
 
 // FetchIPPool returns the merged CIDR list for a country (or tor), read either
-// from filePath or from GitHub. It returns an error instead of exiting, and
-// never returns an empty list without an error.
+// from filePath or from the first working remote source. It never returns an
+// empty list without an error.
 func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath string) ([]string, error) {
-
-	var url string
 	countryCode = strings.ToLower(countryCode)
 
-	if countryCode == "tor" {
-		url = TorURL
-	} else {
-		url = strings.Replace(GeoURL, "COUNTRY_CODE", countryCode, 1)
-	}
-
-	var lines []string
-	var source string
 	if filePath != "" {
-		// If file argument is passed, read file and create set
 		logger.Log("Reading file from "+filePath, logFilePath, verbose)
 		fileLines, err := file.ReadListFile(filePath)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", filePath, err)
 		}
-		lines = fileLines
-		source = filePath
-	} else {
-		// Else, go fetch from github
-		fetched, err := fetchURL(url, logFilePath, verbose)
-		if err != nil {
-			return nil, err
+		list := MergeIPsToCIDRs(fileLines)
+		if len(list) == 0 {
+			return nil, fmt.Errorf("no valid networks found in %s", filePath)
 		}
-		lines = fetched
-		source = url
+		return list, nil
 	}
 
-	list := MergeIPsToCIDRs(lines)
-	if len(list) == 0 {
-		return nil, fmt.Errorf("no valid networks found in %s", source)
+	sources := CountrySources
+	if countryCode == "tor" {
+		sources = TorSources
 	}
-	return list, nil
+	urls := make([]string, 0, len(sources))
+	for _, src := range sources {
+		urls = append(urls, strings.Replace(src, "COUNTRY_CODE", countryCode, 1))
+	}
+	return fetchFromSources(urls, verbose, logFilePath)
+}
+
+// fetchFromSources tries each URL in order and returns the first one that yields
+// at least one valid network. A transport error, a non-2xx status or an empty
+// result all count as failure and move on to the next URL.
+func fetchFromSources(urls []string, verbose bool, logFilePath string) ([]string, error) {
+	var errs []string
+	for _, url := range urls {
+		lines, err := fetchURL(url, logFilePath, verbose)
+		if err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		list := MergeIPsToCIDRs(lines)
+		if len(list) == 0 {
+			errs = append(errs, "no valid networks from "+url)
+			continue
+		}
+		logger.Log("Using source "+url, logFilePath, verbose)
+		return list, nil
+	}
+	return nil, fmt.Errorf("all sources failed: %s", strings.Join(errs, "; "))
 }
 
 // fetchURL downloads a newline-separated list, failing on transport errors,
