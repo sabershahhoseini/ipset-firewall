@@ -10,6 +10,7 @@ import (
 	"github.com/sabershahhoseini/ipset-firewall/pkg/ipsetfw"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/netutils"
+	"github.com/sabershahhoseini/ipset-firewall/util/usermgmt"
 )
 
 func main() {
@@ -111,7 +112,7 @@ Check if IP exists in IR (Iran):
 		checkerr.Fatal(err)
 		file.ExportToFile(*filePath, ipList, *verbose)
 	} else if *config != "" && !*clear {
-		ipsetfw.LoopConfigFile(*config, *iptables, *verbose)
+		checkerr.Fatal(ipsetfw.LoopConfigFile(*config, *iptables, *verbose))
 	} else if *list && *setName != "" {
 		ipsetfw.ListSet(*setName, *verbose)
 	} else if *list {
@@ -119,10 +120,11 @@ Check if IP exists in IR (Iran):
 	} else if *rollback && *setName != "" {
 		ipsetfw.RollbackSet(*setName)
 	} else if *clear {
-		ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose)
+		checkerr.Fatal(ipsetfw.LoopConfigFileClear(*config, *iptables, *verbose))
 	} else if *countryCode != "" && *setName != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")
 		checkerr.Fatal(err)
+		usermgmt.ExitIfNotRoot()
 		checkerr.Fatal(ipsetfw.IPsetfw(ipList, set, *iptables, rule, file.Mattermost{}, "", *verbose))
 	} else if *countryCode != "" && *checkIP != "" {
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, *filePath, "")

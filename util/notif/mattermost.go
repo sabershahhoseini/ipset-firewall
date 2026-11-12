@@ -3,23 +3,38 @@ package notif
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
-
-	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
+	"net/url"
+	"time"
 )
 
-func SendNotificationMattermost(message, mattermostUrl, mattermostToken string) {
+// SendNotificationMattermost posts message to a Mattermost incoming webhook.
+// It does nothing when the URL or token is empty. It returns an error instead of exiting.
+func SendNotificationMattermost(message, mattermostUrl, mattermostToken string) error {
 	if mattermostToken == "" || mattermostUrl == "" {
-		return
+		return nil
 	}
-	postBody, _ := json.Marshal(map[string]string{
+	postBody, err := json.Marshal(map[string]string{
 		"text": message,
 	})
-	responseBody := bytes.NewBuffer(postBody)
-	url := mattermostUrl + "/hooks/" + mattermostToken
-	resp, err := http.Post(url, "application/json", responseBody)
 	if err != nil {
-		checkerr.Fatal(err)
+		return err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(mattermostUrl+"/hooks/"+mattermostToken, "application/json", bytes.NewBuffer(postBody))
+	if err != nil {
+		// The URL contains the webhook token; drop it before the error reaches any log.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		return fmt.Errorf("mattermost request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("mattermost returned %s", resp.Status)
+	}
+	return nil
 }

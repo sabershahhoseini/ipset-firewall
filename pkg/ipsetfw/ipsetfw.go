@@ -293,7 +293,6 @@ const maxSetEntries = 65536
 
 func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
-	usermgmt.ExitIfNotRoot()
 	setName := setModel.SetName
 	countryCode := setModel.Country
 	tmpSetName := setName + "-tmp"
@@ -311,7 +310,7 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	// fail reports the error to Mattermost (best effort) and returns it.
 	fail := func(msg string, err error) error {
 		if notifyMattermost {
-			notif.SendNotificationMattermost(notifMsgInfo+"ERROR: "+msg, mattermost.URL, mattermost.Token)
+			notify(mattermost, notifMsgInfo+"ERROR: "+msg)
 		}
 		return fmt.Errorf("%s: %w", msg, err)
 	}
@@ -408,30 +407,52 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	msg := notifMsgInfo + "Successfully created set " + setName + " for country " +
 		countryCode + " with " + strconv.Itoa(len(ipListMerged)) + " number of entries!"
 	fmt.Println(msg)
-	notif.SendNotificationMattermost(msg, mattermost.URL, mattermost.Token)
+	notify(mattermost, msg)
 	return nil
 }
 
-func LoopConfigFile(path string, iptables bool, verbose bool) {
+// notify sends a Mattermost message on a best-effort basis; failures are only printed.
+func notify(m file.Mattermost, msg string) {
+	if err := notif.SendNotificationMattermost(msg, m.URL, m.Token); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: "+err.Error())
+	}
+}
+
+// fetchRuleList returns the combined networks for one config rule, from its files or from GitHub.
+func fetchRuleList(r file.Rule, verbose bool, logFilePath string) ([]string, error) {
+	if len(r.Path) == 0 {
+		return netutils.FetchIPPool(r.Country, verbose, "", logFilePath)
+	}
+	var ipList []string
+	for _, path := range r.Path {
+		fetched, err := netutils.FetchIPPool(r.Country, verbose, path, logFilePath)
+		if err != nil {
+			return nil, err
+		}
+		ipList = append(ipList, fetched...)
+	}
+	return ipList, nil
+}
+
+// LoopConfigFile applies every rule in the config. A failing rule is reported and skipped;
+// the others still run. An error is returned at the end if any rule failed.
+func LoopConfigFile(path string, iptables bool, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
-	var ipListConcatenated []string
-	var ipList []string
-	var set models.Set
-	var rule models.Rule
+	logFilePath := inventory.LogFilePath
 	var mattermost file.Mattermost
-	var logFilePath string = inventory.LogFilePath
 	if inventory.Mattermost.Token != "" && inventory.Mattermost.URL != "" {
 		mattermost = inventory.Mattermost
 	}
 
+	var failedSets []string
 	for _, r := range inventory.IPSetRules {
-		set = models.Set{
+		set := models.Set{
 			Country: r.Country,
 			SetName: r.SetName,
 		}
-		rule = models.Rule{
+		rule := models.Rule{
 			Policy: r.IPtables.Policy,
 			Insert: r.IPtables.Insert,
 			Type:   r.IPtables.Type,
@@ -440,40 +461,25 @@ func LoopConfigFile(path string, iptables bool, verbose bool) {
 			Table:  r.IPtables.Table,
 			Not:    r.IPtables.Not,
 		}
-		if r.IPtables.Policy != "" {
-			iptables = true
+		useIptables := iptables || r.IPtables.Policy != ""
+
+		ipList, err := fetchRuleList(r, verbose, logFilePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
+			failedSets = append(failedSets, set.SetName)
+			continue
 		}
-		failed := false
-		if len(r.Path) != 0 {
-			for _, path := range r.Path {
-				fetched, err := netutils.FetchIPPool(*&set.Country, verbose, path, logFilePath)
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "skipping set "+set.SetName+": "+err.Error())
-					failed = true
-					break
-				}
-				ipList = fetched
-				ipList = includeExtraIPs(ipList, r.ExtraIPs)
-				ipListConcatenated = append(ipListConcatenated, ipList...)
-			}
-			if failed {
-				continue
-			}
-			if err := IPsetfw(ipListConcatenated, set, iptables, rule, mattermost, logFilePath, verbose); err != nil {
-				fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
-			}
-		} else {
-			fetched, err := netutils.FetchIPPool(*&set.Country, verbose, "", logFilePath)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "skipping set "+set.SetName+": "+err.Error())
-				continue
-			}
-			ipList := includeExtraIPs(fetched, r.ExtraIPs)
-			if err := IPsetfw(ipList, set, iptables, rule, mattermost, logFilePath, verbose); err != nil {
-				fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
-			}
+		ipList = includeExtraIPs(ipList, r.ExtraIPs)
+
+		if err := IPsetfw(ipList, set, useIptables, rule, mattermost, logFilePath, verbose); err != nil {
+			fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
+			failedSets = append(failedSets, set.SetName)
 		}
 	}
+	if len(failedSets) > 0 {
+		return fmt.Errorf("%d set(s) not updated: %s", len(failedSets), strings.Join(failedSets, ", "))
+	}
+	return nil
 }
 
 func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
