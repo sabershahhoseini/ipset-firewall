@@ -38,6 +38,7 @@ type Inventory struct {
 	Mirror      string       `yaml:"mirror"`
 	Offline     bool         `yaml:"offline"`
 	StateFile   string       `yaml:"stateFile"`
+	Hooks       HooksConfig  `yaml:"hooks"`
 	Persist     bool         `yaml:"persist"`
 	PersistDir  string       `yaml:"persistDir"`
 	LogFilePath string       `yaml:"logFile"`

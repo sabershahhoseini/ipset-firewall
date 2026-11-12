@@ -179,6 +179,14 @@ func (inv Inventory) Validate() error {
 	if (len(inv.Block) > 0 || len(inv.Allow) > 0 || len(inv.Only) > 0) && len(inv.IPSetRules) > 0 {
 		return fmt.Errorf("config mixes 'rules' with 'block'/'allow'/'only'; use one format")
 	}
+	if inv.Hooks.Any() || inv.Hooks.Timeout != "" {
+		if len(inv.IPSetRules) > 0 {
+			return fmt.Errorf("hooks need the block/allow/only format, not 'rules'")
+		}
+		if err := inv.Hooks.Validate(); err != nil {
+			return err
+		}
+	}
 	switch inv.OnlyAction {
 	case "", "drop", "reject":
 	default:

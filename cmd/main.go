@@ -34,6 +34,7 @@ func main() {
 	plan := flag.Bool("plan", false, "With -config: show what would be applied, change nothing")
 	status := flag.Bool("status", false, "With -config: show the live state of each block")
 	verify := flag.Bool("verify", false, "With -config: check the live firewall matches the config; exit 1 on differences")
+	testHook := flag.String("test-hook", "", "With -config: run the before, after or onError hooks against a sample report; changes nothing")
 	restore := flag.Bool("restore", false, "Put back the last saved snapshot (persist: true); for boot, no network needed")
 	force := flag.Bool("force", false, "Ignore fresh cached lists and download again")
 	mirror := flag.String("mirror", "", "Directory of <code>.txt lists to use before any download")
@@ -59,6 +60,7 @@ Options:
 
 	-config		{PATH}			Read config from yaml file
 	-plan					with -config: show what would be applied, change nothing
+	-test-hook	{EVENT}			with -config: run the before, after or onError hooks against a sample report
 	-restore				put back the last saved snapshot (persist: true); used at boot
 	-status					with -config: show the live state of each block
 	-verify					with -config: check the live firewall matches the config; exit 1 on differences
@@ -142,6 +144,10 @@ Check if IP exists in IR (Iran):
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, "", "")
 		checkerr.Fatal(err)
 		file.ExportToFile(*filePath, ipList, *verbose)
+	} else if *config != "" && *testHook != "" {
+		unlock := takeLock()
+		defer unlock()
+		checkerr.Fatal(ipsetfw.TestHooks(*config, *testHook, *verbose))
 	} else if *restore {
 		unlock := takeLock()
 		defer unlock()

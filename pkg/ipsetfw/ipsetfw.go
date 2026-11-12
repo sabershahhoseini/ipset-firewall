@@ -415,7 +415,7 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
 	if newFormat(inventory) {
-		return clearBlockAllow(inventory, verbose)
+		return clearBlockAllow(path, inventory, verbose)
 	}
 
 	// Each distinct (table, chain, parent) jump is removed once, after all sets are gone.

@@ -324,6 +324,14 @@ func applyBlockAllow(path string, inv file.Inventory, verbose bool) error {
 		return err
 	}
 	rep := newReport("apply", path)
+	hooks := newHookRunner(inv)
+	if err := hooks.runBefore(rep); err != nil {
+		rep.finish(err)
+		if serr := rep.save(reportPath(inv)); serr != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not save report: "+serr.Error())
+		}
+		return err
+	}
 	runErr := applyBlockAllowRun(inv, rep, verbose)
 	if inv.Persist {
 		if ipt, err := iptables.New(); err != nil {
@@ -333,6 +341,7 @@ func applyBlockAllow(path string, inv file.Inventory, verbose bool) error {
 		}
 	}
 	rep.finish(runErr)
+	runErr = hooks.afterRun(inv, rep, runErr)
 	fmt.Println(msgPrefix() + "Summary: " + rep.summary())
 	logger.Log("Summary: "+rep.summary(), inv.LogFilePath, false)
 	if err := rep.save(reportPath(inv)); err != nil {
@@ -444,10 +453,24 @@ func applyBlockAllowRun(inv file.Inventory, rep *runReport, verbose bool) error 
 	return nil
 }
 
-// clearBlockAllow removes everything applyBlockAllow created: the rules in IPSET_FW, the block
+// clearBlockAllow removes everything applyBlockAllow created, running the before and after hooks
+// around it (the report is only given to hooks; last-run.json keeps describing the last apply):
+// the rules in IPSET_FW, the block
 // sets and their backups, the jump and the chain.
-func clearBlockAllow(inv file.Inventory, verbose bool) error {
+func clearBlockAllow(path string, inv file.Inventory, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
+	rep := newReport("clear", path)
+	hooks := newHookRunner(inv)
+	if err := hooks.runBefore(rep); err != nil {
+		return err
+	}
+	runErr := clearBlockAllowRun(inv, verbose)
+	rep.finish(runErr)
+	return hooks.afterRun(inv, rep, runErr)
+}
+
+// clearBlockAllowRun does the work of clearBlockAllow.
+func clearBlockAllowRun(inv file.Inventory, verbose bool) error {
 	r := baseRule()
 	ipt, err := iptables.New()
 	if err != nil {
@@ -556,6 +579,9 @@ func PlanConfig(path string, verbose bool) error {
 		} else if cs := sshclients.Find(); len(cs) > 0 {
 			fmt.Printf("          ok: current SSH client %s stays allowed\n", describeClients(cs))
 		}
+	}
+	if n := describeHooks(inv); n > 0 {
+		failed = append(failed, fmt.Sprintf("%d hook problem(s)", n))
 	}
 	fmt.Println("nothing applied (-plan)")
 	if len(failed) > 0 {

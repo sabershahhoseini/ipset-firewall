@@ -6,6 +6,7 @@
 #   ipsetfw -config full-config.yml -verify    compare firewall with this file; exit 1 on differences
 #   ipsetfw -config full-config.yml -clear     remove everything this file created
 #   ipsetfw -config full-config.yml -restore   put back the last saved sets and rules (boot)
+#   ipsetfw -config full-config.yml -test-hook after   try the hooks of an event; changes nothing
 #   extra flags: -force (ignore cache), -offline, -mirror DIR, -unattended, -only-timeout 60s, -v
 #
 # Every list entry (in allow, only and block) can be written as:
@@ -38,6 +39,17 @@ cache:
 
 mirror: /srv/ipsetfw/mirror             # <code>.txt files here are used before any download
 offline: false                          # true = never use the network (mirror and cache only)
+
+# Programs to run around a run. Each must be an absolute path, owned by root, not writable by others.
+#hooks:
+#  timeout: 30s                          # default for every hook
+#  before:
+#    - run: [/etc/ipsetfw/hooks/sync-mirror.sh, internal.example.com]
+#      onFailure: abort                  # abort = stop, change nothing | warn
+#  after:
+#    - run: [/etc/ipsetfw/hooks/health-check.sh, http://127.0.0.1/health]
+#      when: changed                     # only when a list changed
+#      onFailure: rollback               # restore the previous lists if this fails
 
 # Never blocked. Accepted before any block rule, as source and destination.
 allow:

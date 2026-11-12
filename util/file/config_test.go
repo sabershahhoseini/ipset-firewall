@@ -3,6 +3,7 @@ package file
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -190,5 +191,62 @@ func TestOnlyParsesAndValidates(t *testing.T) {
 	}
 	if parse(t, "only: [ir]\n").OnlyActionOrDefault() != "drop" {
 		t.Error("default action is not drop")
+	}
+}
+
+func TestHooksValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		doc     string
+		wantErr string
+	}{
+		{"good", "hooks:\n  timeout: 20s\n  before:\n    - run: [/usr/local/bin/a, --x]\n      onFailure: warn\n  after:\n    - run: [/b]\n      when: changed\n      onFailure: rollback\n      timeout: 5s\nblock: [ir]\n", ""},
+		{"onError not yet", "hooks:\n  onError:\n    - run: [/c]\nblock: [ir]\n", "onError is not supported yet"},
+		{"defaults only", "hooks:\n  after:\n    - run: [/b]\nblock: [ir]\n", ""},
+		{"relative path", "hooks:\n  before:\n    - run: [a.sh]\nblock: [ir]\n", "absolute path"},
+		{"neither run nor webhook", "hooks:\n  before:\n    - when: changed\nblock: [ir]\n", "set run"},
+		{"both", "hooks:\n  after:\n    - run: [/a]\n      webhook: http://x\nblock: [ir]\n", "not both"},
+		{"webhook not yet", "hooks:\n  after:\n    - webhook: http://x\nblock: [ir]\n", "not supported yet"},
+		{"before with when", "hooks:\n  before:\n    - run: [/a]\n      when: changed\nblock: [ir]\n", "only for after"},
+		{"before rollback", "hooks:\n  before:\n    - run: [/a]\n      onFailure: rollback\nblock: [ir]\n", "abort or warn"},
+		{"after abort", "hooks:\n  after:\n    - run: [/a]\n      onFailure: abort\nblock: [ir]\n", "warn or rollback"},
+		{"after bad when", "hooks:\n  after:\n    - run: [/a]\n      when: never\nblock: [ir]\n", "always or changed"},
+		{"onError rollback", "hooks:\n  onError:\n    - run: [/a]\n      onFailure: rollback\nblock: [ir]\n", "must be warn"},
+		{"onError with when", "hooks:\n  onError:\n    - run: [/a]\n      when: changed\nblock: [ir]\n", "only for after"},
+		{"bad timeout", "hooks:\n  after:\n    - run: [/a]\n      timeout: soon\nblock: [ir]\n", "positive duration"},
+		{"zero timeout", "hooks:\n  timeout: 0s\n  after:\n    - run: [/a]\nblock: [ir]\n", "positive duration"},
+		{"retries too high", "hooks:\n  after:\n    - run: [/a]\n      retries: 11\nblock: [ir]\n", "0 to 10"},
+		{"with legacy rules", "hooks:\n  after:\n    - run: [/a]\nrules:\n  - country: ir\n    set: ir-block\n", "hooks need the block"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parse(t, tt.doc).Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestHookDefaults(t *testing.T) {
+	inv := parse(t, "hooks:\n  timeout: 20s\n  before:\n    - run: [/a]\n  after:\n    - run: [/b]\n      timeout: 5s\n    - run: [/c]\n")
+	h := inv.Hooks
+	if got := h.TimeoutFor(h.After[0]); got != 5*time.Second {
+		t.Errorf("own timeout = %v", got)
+	}
+	if got := h.TimeoutFor(h.After[1]); got != 20*time.Second {
+		t.Errorf("section timeout = %v", got)
+	}
+	if got := (HooksConfig{}).TimeoutFor(Hook{}); got != DefaultHookTimeout {
+		t.Errorf("default timeout = %v", got)
+	}
+	if h.Before[0].OnFailureOrDefault("before") != "abort" || h.After[0].OnFailureOrDefault("after") != "warn" {
+		t.Error("default failure policies wrong")
 	}
 }

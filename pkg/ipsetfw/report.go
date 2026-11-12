@@ -60,7 +60,7 @@ type listReport struct {
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
 	Set     string `json:"set"`
-	Status  string `json:"status"` // updated, unchanged, failed or skipped
+	Status  string `json:"status"` // updated, unchanged, failed, skipped or rolledback
 	Source  string `json:"source"`
 	Type    string `json:"type"`
 	Entries int    `json:"entries"`
@@ -83,12 +83,13 @@ type runReport struct {
 	AllowOnlyChanged bool         `json:"allowOnlyChanged"`
 	StaleRemoved     []string     `json:"staleRemoved,omitempty"`
 	RolledBack       []string     `json:"rolledBack,omitempty"`
+	HookFailures     []string     `json:"hookFailures,omitempty"`
 	Errors           []string     `json:"errors,omitempty"`
 }
 
 func newReport(action, config string) *runReport {
 	host, _ := os.Hostname()
-	return &runReport{Action: action, Config: config, Host: host, Started: time.Now().UTC(), AllowOnly: "off"}
+	return &runReport{Action: action, Config: config, Host: host, Started: time.Now().UTC(), AllowOnly: "off", Lists: []listReport{}}
 }
 
 // finish fills in the result, whether anything changed, and the duration.
@@ -120,7 +121,7 @@ func (r *runReport) failedNames() []string {
 
 // summary is a one-line account of the run for the terminal and the log.
 func (r *runReport) summary() string {
-	var updated, unchanged, failed, skipped int
+	var updated, unchanged, failed, skipped, rolledBack int
 	for _, l := range r.Lists {
 		switch l.Status {
 		case "updated":
@@ -131,11 +132,19 @@ func (r *runReport) summary() string {
 			failed++
 		case "skipped":
 			skipped++
+		case "rolledback":
+			rolledBack++
 		}
 	}
 	s := fmt.Sprintf("%d updated, %d unchanged, %d failed", updated, unchanged, failed)
 	if skipped > 0 {
 		s += fmt.Sprintf(", %d skipped", skipped)
+	}
+	if rolledBack > 0 {
+		s += fmt.Sprintf(", %d rolled back", rolledBack)
+	}
+	if n := len(r.HookFailures); n > 0 {
+		s += fmt.Sprintf(", %d hook failure(s)", n)
 	}
 	if r.AllowOnlyChanged {
 		s += ", allow-only " + r.AllowOnly

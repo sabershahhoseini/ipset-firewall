@@ -242,6 +242,35 @@ systemctl enable ipsetfw-restore.service      # with persist: true, restores the
 * Logs: `journalctl -u ipsetfw.service`. Next run: `systemctl list-timers ipsetfw.timer`.
 * Health check: `ipsetfw -config /etc/ipsetfw/ipsetfw.yml -verify` exits 1 if the live firewall has drifted from the config.
 
+### Hooks
+
+Run your own programs before and after a run.
+
+```yaml
+hooks:
+  timeout: 30s                       # default for every hook
+  before:
+    - run: [/etc/ipsetfw/hooks/sync-mirror.sh, internal.example.com]
+      onFailure: abort               # abort (default): stop, change nothing | warn: go on
+  after:
+    - run: [/etc/ipsetfw/hooks/health-check.sh, http://127.0.0.1/health]
+      when: changed                  # always (default) | changed
+      onFailure: rollback            # warn (default) | rollback
+```
+
+* **A hook is a program and its arguments, never a shell string.** `run[0]` must be an absolute path.
+* **Hooks run as root, so they are checked first.** The file must be owned by root, not writable by group or others, and executable. Otherwise the hook is refused and counts as failed. `-plan` shows this too.
+* **A hook gets a fixed `PATH`** and only these variables: `IPSETFW_EVENT`, `IPSETFW_ACTION` (`apply` or `clear`), `IPSETFW_CONFIG`, `IPSETFW_RESULT`, `IPSETFW_CHANGED`, `IPSETFW_ERROR`, `IPSETFW_FAILED`, and `IPSETFW_REPORT`, the path to the run report as JSON (a private temporary file, removed afterwards). Read it with `jq`.
+* **Order:** before hooks, the run, then after hooks. A before hook that fails with `abort` stops the run before anything is changed. After hooks run only when the run succeeded.
+* **`when: changed`** runs an after hook only when some list really changed.
+* **`onFailure: rollback`** on an after hook puts every list updated by this run back to its previous contents. The firewall rules and allow-only are not rolled back, and a list on its first update has no previous contents; both are reported. Use it with a health check.
+* **Timeouts** kill the hook and everything it started. Output is shown with a `[hook after 1]` prefix and written to the log file.
+* A failing after hook makes the run exit 1, but the change is kept unless it rolled back.
+* **`ipsetfw -config x.yml -test-hook after`** runs the hooks of an event against a sample report and changes nothing. `-plan` lists the hooks.
+* Hooks run for apply and `-clear` only, never for `-plan`, `-status`, `-verify` or `-restore`.
+
+Examples are in `contrib/hooks/`: `health-check.sh` (roll back if your site stops answering) and `save-to-file.sh` (keep every run's report).
+
 ### Run report
 
 Every apply ends with a one-line summary, for example `Summary: 1 updated, 4 unchanged, 0 failed`. The full report is saved as `last-run.json`, next to the state file. For each list it gives the status (`updated`, `unchanged`, `failed` or `skipped`), the entries, how many were added and removed, the source, and any error. It also records the allow-only state and whether anything changed.
