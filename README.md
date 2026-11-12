@@ -15,7 +15,7 @@ The purpose of ipsetfw is for automation. You just give it a yaml file, setup a 
 
 It works like this:
 
-Takes a list of IPs, either via fetching from github with country code you provided, or a list of IP networks you passed to the binary.
+Takes a list of IPs, either by downloading the country list for the code you gave (see Notes for the sources), or from files and addresses you give it.
 
 After that, it will create a ipset `set`, and if you choose, it will also add the required iptable rule for it.
 
@@ -28,8 +28,10 @@ Next time you run the same command, it will clear everything and start again fro
 
 ## Usage
 
-There are two ways of using ipsetfw, either you pass arguments to cli which is a bit limited,
-or give it a yaml file for more option.
+There are two ways to use ipsetfw. You can pass arguments on the command line, which is limited. Or you can give it a yaml file, which is the normal way:
+
+* **block / allow / only** (recommended): describe what to block, what to always allow, and whether only some sources may connect. See "Simple config" below and `example-config/full-config.yml`.
+* **rules** (legacy): the older format, kept so existing configs still work. See "Legacy config" below.
 
 ### CLI
 You can use `ipsetfw -help` to see options and example of usage.
@@ -39,23 +41,23 @@ Create a set of Iran IP pool and block IPs from Iran by adding iptables rule:
 ipsetfw -country IR -set set -iptables -policy drop
 ```
 
-Fetch github and export Iran IP pool:
+Download the Iran IP pool and export it to a file:
 ```
 ipsetfw -country ir -export -file /tmp/list-export.txt -v
 ```
 
-Create a set of Iran IP pool and accpet IPs from Iran from file:
+Create a set of Iran IP pool from a file and accept IPs from it:
 ```
 ipsetfw -country IR -set set -iptables -policy accept -file /tmp/list-export.txt
 ```
 
-### Config file
+Commonly used flags: `-v` (verbose), `-force` (ignore fresh cached lists and maxChange), `-mirror DIR` and `-offline` (use local lists only), `-plan`, `-status` and `-verify` (with `-config`). Run `ipsetfw -help` for the full list.
 
-You can use a yaml config file with more options. Here's an example:
+### Legacy config (rules:)
+
+The older yaml format. It still works, but it can't be mixed with `block`, `allow` or `only`. For new setups use the block/allow format. Here's an example:
 
 ```
-defaultChain: IPSET_FW
-
 rules:
   - country: ir
     set: ir-block
@@ -70,16 +72,16 @@ rules:
     set: us-block
     iptables:
       policy: drop
-      insert: 2
+      insert: 1               # the filter chain is empty on a new host, so position 1
       chain: "IPSET_FW"
       table: "filter"
 ```
 
-As you can see, you can only give country code to fetch list of IPs from github.
+A rule can give a country code, which downloads that country's list.
 
-Or you can pass your own files to ipsetfw to create a set with multiple countries, or even add your own IPs.
+Or it can give your own files, to combine several lists into one set, or to add your own IPs (`extraIPs`).
 
-You can completely ignore `iptables` section. This way, ipsetfw will not take care of iptable rules for you.
+You can leave out the `iptables` section. Then ipsetfw does not add iptables rules for that rule.
 
 ### Clear changes
 
@@ -109,7 +111,7 @@ Ready-to-use configs are in [`example-config/`](example-config/). Each one has b
 
 Run `ipsetfw -config <file> -plan` before applying any of them, and change the example addresses (203.0.113.42 and so on) to your own.
 
-### Simple config (block / allow)
+### Simple config (block / allow / only)
 
 ```yaml
 logFile: "/var/log/ipsetfw.log"
@@ -329,11 +331,11 @@ The state file, `/var/lib/ipsetfw/state.json` by default (`stateFile:` in the co
 
 ### Notes
 
-* Country lists come from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (CC0, updated daily) and fall back to [ipdeny.com](https://www.ipdeny.com/ipblocks/). Tor exit nodes come from the [Tor Project bulk exit list](https://check.torproject.org/torbulkexitlist) and fall back to [SecOps-Institute/Tor-IP-Addresses](https://github.com/SecOps-Institute/Tor-IP-Addresses). Sources are tried in order, and an empty result counts as a failure.
+* Country lists come from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (CC0) and fall back to [ipdeny.com](https://www.ipdeny.com/ipblocks/). Check the sources' current terms and update schedule before you depend on them. Tor exit nodes come from the [Tor Project bulk exit list](https://check.torproject.org/torbulkexitlist) and fall back to [SecOps-Institute/Tor-IP-Addresses](https://github.com/SecOps-Institute/Tor-IP-Addresses). Sources are tried in order, and an empty result counts as a failure.
 * IPv6 entries are skipped. Only IPv4 addresses and networks are used.
 * Invalid lines in a file are skipped, and blank lines are ignored.
-* If a list cannot be downloaded, is empty, or has more than 65536 entries, the existing set is left unchanged and the error is reported.
+* If a list cannot be downloaded or is empty, the existing set is left unchanged and the error is reported. If every source fails, the last cached copy is used with a warning.
 * A config rule can set `parent` under `iptables:` to choose the chain the jump comes from. By default it is `PREROUTING` for table `raw` and `INPUT` otherwise.
 * In a config file, a failing rule is reported and the remaining rules still run.
 * Sets larger than 65536 entries are created with the `ipset` command, which must be installed. Sets up to that size need only the kernel.
-* Every entry in a set is matched the same way. `extraIPs` are added to the set, so listing a private range there blocks it too. Do not add them to a block set unless you mean to block them.
+* Every address in a block or allow list is matched the same way. In the legacy format, `extraIPs` are added to the set, so a private range listed there is blocked too. Do not put one in a block set unless you mean to block it.
