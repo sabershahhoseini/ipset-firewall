@@ -283,6 +283,13 @@ func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	backupSetName := setName + "-bak"
 
 	applyRuleDefaults(&rule)
+	if iptables {
+		switch strings.ToLower(rule.Policy) {
+		case "accept", "drop":
+		default:
+			return fmt.Errorf("refusing to update set %s: iptables policy must be accept or drop, got %q", setName, rule.Policy)
+		}
+	}
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -445,7 +452,8 @@ func LoopConfigFile(path string, iptables bool, verbose bool) error {
 			Table:  r.IPtables.Table,
 			Not:    r.IPtables.Not,
 		}
-		useIptables := iptables || r.IPtables.Policy != ""
+		// iptables rules are only added for rules that have a policy.
+		useIptables := r.IPtables.Policy != ""
 
 		ipList, err := fetchRuleList(r, verbose, logFilePath)
 		if err != nil {
