@@ -1,0 +1,31 @@
+# Every option in one file.
+logFile: /var/log/ipsetfw.log
+stateFile: /var/lib/ipsetfw/state.json
+mattermost:
+  url: "https://mattermost.example.com"
+  token: "TOKEN"
+cache:
+  dir: /var/cache/ipsetfw
+  maxAge: 6h
+mirror: /srv/ipsetfw/mirror     # used first when it has <code>.txt
+
+only:
+  - ir
+  - name: office
+    ips: [198.51.100.0/24]
+onlyAction: drop
+
+allow:
+  - 203.0.113.42
+  - name: partners
+    file: [/etc/ipsetfw/partners.txt]
+  - name: monitoring
+    ips: [192.0.2.10]
+    ports: [9100]
+
+block:
+  - tor
+  - 192.0.2.66
+  - name: ssh-cn
+    country: cn
+    ports: [22]

@@ -1,0 +1,8 @@
+# Keep the website open to everyone, but keep some countries away from SSH.
+block:
+  - name: ssh-cn
+    country: cn
+    ports: [22]
+  - name: ssh-ru
+    country: ru
+    ports: [22]

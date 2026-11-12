@@ -1,0 +1,95 @@
+# ipsetfw full reference config. Every option is shown; delete what you don't need.
+#
+#   ipsetfw -config full-config.yml -plan      show what would change (changes nothing)
+#   ipsetfw -config full-config.yml            apply (root)
+#   ipsetfw -config full-config.yml -status    live state of every list
+#   ipsetfw -config full-config.yml -verify    compare firewall with this file; exit 1 on differences
+#   ipsetfw -config full-config.yml -clear     remove everything this file created
+#   ipsetfw -config full-config.yml -restore   put back the last saved sets and rules (boot)
+#   ipsetfw -config full-config.yml -test-hook after   try the hooks of an event; changes nothing
+#   extra flags: -force (ignore cache), -offline, -mirror DIR, -unattended, -only-timeout 60s, -v
+#
+# Every list entry (in allow, only and block) can be written as:
+#   - 203.0.113.42                 an address
+#   - 10.0.0.0/8                   a network
+#   - ir                           a country code (two letters) or tor
+#   - name: x                      a named list, with any of:
+#       country: ir                  fetch this country's list
+#       file: [/path/a.txt]          one address or network per line
+#       ips: [192.0.2.0/24]          addresses written here
+#       direction: src               src or dst (allow lists default to both)
+#       ports: [22, 443]             only these destination ports
+#       proto: tcp                   tcp (default) or udp, with ports
+
+logFile: /var/log/ipsetfw.log           # "" = no log file
+stateFile: /var/lib/ipsetfw/state.json  # last update of each list, used by -status
+persist: true                           # save sets and rules after each run; -restore puts them back at boot
+persistDir: /var/lib/ipsetfw/restore
+
+# Notifications on success and failure. Failures to send only print a warning.
+#mattermost:
+#  url: "https://mattermost.example.com"
+#  token: "TOKEN"
+
+# Downloaded lists are cached. A copy younger than maxAge is used without downloading;
+# if every source fails, the last copy is used.
+cache:
+  dir: /var/cache/ipsetfw               # "off" = no cache
+  maxAge: 12h
+
+mirror: /srv/ipsetfw/mirror             # <code>.txt files here are used before any download
+maxChange: 50%                          # refuse a list update that changes more than half its entries (-force accepts)
+offline: false                          # true = never use the network (mirror and cache only)
+
+# Programs to run around a run. Each must be an absolute path, owned by root, not writable by others.
+#hooks:
+#  timeout: 30s                          # default for every hook
+#  before:
+#    - run: [/etc/ipsetfw/hooks/sync-mirror.sh, internal.example.com]
+#      onFailure: abort                  # abort = stop, change nothing | warn
+#  after:
+#    - run: [/etc/ipsetfw/hooks/health-check.sh, http://127.0.0.1/health]
+#      when: changed                     # only when a list changed
+#      onFailure: rollback               # restore the previous lists if this fails
+#    - webhook: https://hooks.example.com/ipsetfw   # POSTs the run report as JSON
+#      when: changed
+#      retries: 3
+#  onError:
+#    - webhook: https://alerts.example.com/ipsetfw  # when a run fails
+
+# Never blocked. Accepted before any block rule, as source and destination.
+allow:
+  - 203.0.113.42                        # admin IP
+  - 10.0.0.0/8                          # private network
+  - name: partners
+    file: [/etc/ipsetfw/partners.txt]
+  - name: monitoring
+    ips: [192.0.2.10]
+    ports: [9100]                       # only the metrics port
+
+# Allow-only: inbound, only these (and allow) may connect; everything else is refused.
+# Remove this section to turn allow-only off. The first install asks you to type yes.
+only:
+  - ir
+  - name: office
+    ips: [198.51.100.0/24]
+onlyAction: drop                        # drop (silent) or reject (connection refused)
+
+# Dropped. Bare addresses are collected into one set: addresses-block.
+block:
+  - tor
+  - 192.0.2.66
+  - name: scanners
+    file: [/etc/ipsetfw/scanners.txt]
+    ips: [192.0.2.128/25]
+    maxChange: off                      # this list may change by any amount
+  - name: ssh-cn
+    country: cn
+    ports: [22]                         # block China on SSH only
+  - name: dns-abuse
+    ips: [198.51.100.128/25]
+    ports: [53]
+    proto: udp
+  - name: no-forward
+    ips: [203.0.113.0/25]
+    direction: dst                      # traffic TO these networks (routers)

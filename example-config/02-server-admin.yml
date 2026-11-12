@@ -1,0 +1,13 @@
+# Public server: block bad sources, never block the admin or the private network.
+logFile: /var/log/ipsetfw.log
+cache:
+  dir: /var/cache/ipsetfw
+  maxAge: 12h
+allow:
+  - 10.0.0.0/8
+  - 203.0.113.42            # admin home IP
+block:
+  - tor
+  - cn
+  - name: scanners
+    file: [/etc/ipsetfw/scanners.txt]

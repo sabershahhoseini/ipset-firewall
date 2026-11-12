@@ -1,0 +1,15 @@
+[Unit]
+Description=ipsetfw: restore saved sets and firewall rules at boot
+Documentation=https://github.com/sabershahhoseini/ipset-firewall
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ipsetfw -restore -config /etc/ipsetfw/ipsetfw.yml
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

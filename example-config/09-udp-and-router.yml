@@ -1,0 +1,10 @@
+# Block DNS (UDP 53) from an abusive network, and on a router, stop forwarding
+# traffic to a network (direction dst).
+block:
+  - name: dns-abuse
+    ips: [198.51.100.0/24]
+    ports: [53]
+    proto: udp
+  - name: no-forward
+    ips: [203.0.113.0/24]
+    direction: dst

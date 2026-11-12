@@ -1,0 +1,5 @@
+# Only Iran may connect. The admin IP outside Iran is always allowed.
+only:
+  - ir
+allow:
+  - 203.0.113.42

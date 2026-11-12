@@ -28,9 +28,21 @@ type Mattermost struct {
 
 // Inventory of all routes in yaml config
 type Inventory struct {
-	IPSetRules  []Rule     `yaml:"rules"`
-	Mattermost  Mattermost `yaml:"mattermost"`
-	LogFilePath string     `yaml:"logFile"`
+	IPSetRules  []Rule       `yaml:"rules"`
+	Allow       []BlockEntry `yaml:"allow"`
+	Block       []BlockEntry `yaml:"block"`
+	Only        []BlockEntry `yaml:"only"`
+	OnlyAction  string       `yaml:"onlyAction"`
+	Mattermost  Mattermost   `yaml:"mattermost"`
+	Cache       CacheConfig  `yaml:"cache"`
+	Mirror      string       `yaml:"mirror"`
+	Offline     bool         `yaml:"offline"`
+	StateFile   string       `yaml:"stateFile"`
+	Hooks       HooksConfig  `yaml:"hooks"`
+	MaxChange   string       `yaml:"maxChange"`
+	Persist     bool         `yaml:"persist"`
+	PersistDir  string       `yaml:"persistDir"`
+	LogFilePath string       `yaml:"logFile"`
 }
 
 func ReadConfigFile(path string) string {
@@ -45,12 +57,14 @@ func ReadConfigFile(path string) string {
 	return buf.String()
 }
 
-func ReadListFile(file string) []string {
+func ReadListFile(file string) ([]string, error) {
 	b, err := os.ReadFile(file)
-	checkerr.Fatal(err)
+	if err != nil {
+		return nil, err
+	}
 
 	ipList := strings.Split(string(b), "\n")
-	return ipList
+	return ipList, nil
 }
 
 func DecodeConfig(config string) Inventory {

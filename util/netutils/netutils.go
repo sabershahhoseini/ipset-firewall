@@ -3,20 +3,37 @@ package netutils
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/EvilSuperstars/go-cidrman"
-	"github.com/sabershahhoseini/ipset-firewall/error/checkerr"
 	"github.com/sabershahhoseini/ipset-firewall/util/file"
 	"github.com/sabershahhoseini/ipset-firewall/util/logger"
 )
 
-const GeoURL string = "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/COUNTRY_CODE.cidr"
-const TorURL string = "https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst"
+// CountrySources are tried in order for a country code. COUNTRY_CODE is replaced
+// with the lowercase code.
+//   - ipverse/country-ip-blocks: CC0, RIR-derived, committed daily.
+//   - ipdeny.com: free to use, commercial use allowed by its TOS, rate limited to
+//     5000 downloads/day/IP. Used only as a fallback.
+//
+// Comment lines in the ipverse files are not valid networks and are skipped.
+var CountrySources = []string{
+	"https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/COUNTRY_CODE/ipv4-aggregated.txt",
+	"https://www.ipdeny.com/ipblocks/data/countries/COUNTRY_CODE.zone",
+}
+
+// TorSources are tried in order for the tor exit node list.
+//   - check.torproject.org: the Tor Project's own bulk exit list.
+//   - SecOps-Institute: community mirror of the same data.
+var TorSources = []string{
+	"https://check.torproject.org/torbulkexitlist",
+	"https://raw.githubusercontent.com/SecOps-Institute/Tor-IP-Addresses/master/tor-exit-nodes.lst",
+}
 
 func IsCIDRValid(ip string) (string, bool) {
 	_, _, err := net.ParseCIDR(ip)
@@ -61,73 +78,153 @@ func CheckIPExistsInPool(ipList []string, targetIP string, verbose bool) bool {
 	return false
 }
 
-func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath string) []string {
-
-	var ipList []string
-	var url string
+// FetchIPPool returns the merged CIDR list for a country (or tor), read either
+// from filePath or from the first working remote source. It never returns an
+// empty list without an error.
+func FetchIPPool(countryCode string, verbose bool, filePath string, logFilePath string) ([]string, error) {
 	countryCode = strings.ToLower(countryCode)
 
-	if countryCode == "tor" {
-		url = TorURL
-	} else {
-		tmpUrl := GeoURL
-		url = strings.Replace(tmpUrl, "COUNTRY_CODE", countryCode, 1)
-	}
-
-	// If file argument is passed, read file and create set
 	if filePath != "" {
 		logger.Log("Reading file from "+filePath, logFilePath, verbose)
-		ipList = file.ReadListFile(filePath)
-		list := MergeIPsToCIDRs(ipList)
-		fmt.Println(list)
-		return list
-	}
-	// Else, go fetch from github
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		log.Fatalln(err)
+		fileLines, err := file.ReadListFile(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", filePath, err)
+		}
+		list := MergeIPsToCIDRs(fileLines)
+		if len(list) == 0 {
+			return nil, fmt.Errorf("no valid networks found in %s", filePath)
+		}
+		return list, nil
 	}
 
-	client := &http.Client{}
+	if list, ok, err := fromMirror(countryCode); err != nil {
+		return nil, err
+	} else if ok {
+		logger.Log("Using mirror file for "+countryCode, logFilePath, verbose)
+		return list, nil
+	}
+
+	sources := CountrySources
+	if countryCode == "tor" {
+		sources = TorSources
+	}
+	urls := make([]string, 0, len(sources))
+	for _, src := range sources {
+		urls = append(urls, strings.Replace(src, "COUNTRY_CODE", countryCode, 1))
+	}
+	return fetchFromSources(urls, verbose, logFilePath)
+}
+
+// fetchFromSources returns the list for the first source that works. Order:
+//  1. a fresh cached copy of any source (no network), unless Force is set;
+//  2. a live download from each source in order; success is stored in the cache;
+//  3. if every download fails, the cached copy of any source, whatever its age, with a warning.
+//
+// A transport error, a non-2xx status or an empty result counts as a failed download.
+func fetchFromSources(urls []string, verbose bool, logFilePath string) ([]string, error) {
+	if cacheOpts.Dir != "" && !cacheOpts.Force {
+		for _, url := range urls {
+			lines, age, ok := cachedLines(url)
+			if !ok || age >= cacheOpts.MaxAge {
+				continue
+			}
+			if list := MergeIPsToCIDRs(lines); len(list) > 0 {
+				logger.Log("Using cached list for "+url+" (age "+humanAge(age)+")", logFilePath, verbose)
+				return list, nil
+			}
+		}
+	}
+
+	var errs []string
+	for _, url := range urls {
+		if offline {
+			break
+		}
+		lines, err := fetchURL(url, logFilePath, verbose)
+		if err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		list := MergeIPsToCIDRs(lines)
+		if len(list) == 0 {
+			errs = append(errs, "no valid networks from "+url)
+			continue
+		}
+		if err := storeLines(url, lines); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: could not cache "+url+": "+err.Error())
+		}
+		logger.Log("Using source "+url, logFilePath, verbose)
+		return list, nil
+	}
+
+	for _, url := range urls {
+		lines, age, ok := cachedLines(url)
+		if !ok {
+			continue
+		}
+		list := MergeIPsToCIDRs(lines)
+		if len(list) == 0 {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "warning: all sources failed; using cached list for %s (age %s)\n", url, humanAge(age))
+		return list, nil
+	}
+	if offline {
+		return nil, fmt.Errorf("offline mode: no mirror file or cached copy for %s", urls[0])
+	}
+	return nil, fmt.Errorf("all sources failed: %s", strings.Join(errs, "; "))
+}
+
+// fetchURL downloads a newline-separated list, failing on transport errors,
+// timeouts and non-2xx responses.
+func fetchURL(url string, logFilePath string, verbose bool) ([]string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	logger.Log("Trying to get url: "+url, logFilePath, verbose)
-	resp, err := client.Do(req)
+	resp, err := client.Get(url)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
-
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("fetching %s: unexpected status %s", url, resp.Status)
+	}
 
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, fmt.Errorf("reading body of %s: %w", url, err)
 	}
-	list := strings.Split(string(b), "\n")
 	logger.Log("Finished fetching list of IPs", logFilePath, verbose)
-	list = MergeIPsToCIDRs(list)
-	return list
+	return strings.Split(string(b), "\n"), nil
 }
 
+// MergeIPsToCIDRs normalizes and merges a list of IPs/CIDRs. Invalid lines,
+// IPv6 entries and blank lines are skipped. It never panics.
 func MergeIPsToCIDRs(ipList []string) []string {
 
-	var ipNet *net.IPNet
 	var ipNetList []*net.IPNet
 	var ipListMerged []string
 
-	for _, ip := range ipList {
+	for _, line := range ipList {
+		ip := strings.TrimSpace(line)
 		if ip == "" || strings.Contains(ip, ":") {
 			continue
 		}
-		if !strings.Contains(ip, "/") {
-			_, ipn, err := net.ParseCIDR(ip + "/32")
-			checkerr.Fatal(err)
-			ipNet = ipn
-		} else {
-			_, ipNet, _ = net.ParseCIDR(ip)
+		normalized, isValid := IsCIDRValid(ip)
+		if !isValid {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(normalized)
+		if err != nil || ipNet == nil {
+			continue
 		}
 		ipNetList = append(ipNetList, ipNet)
 	}
-	merged, _ := cidrman.MergeIPNets(ipNetList)
+	merged, err := cidrman.MergeIPNets(ipNetList)
+	if err != nil {
+		return nil
+	}
 	for _, ip := range merged {
 		ipListMerged = append(ipListMerged, ip.String())
 	}

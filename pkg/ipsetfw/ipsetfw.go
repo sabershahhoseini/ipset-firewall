@@ -1,11 +1,13 @@
 package ipsetfw
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -21,47 +23,51 @@ import (
 )
 
 func removeDefaultChain(chainName string, tableName string, logFilePath string, verbose bool) error {
+	if isBuiltinChain(chainName) {
+		return nil
+	}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
-	logger.Log("Removing default chain "+chainName, logFilePath, verbose)
 	chainExists, err := ipt.ChainExists(tableName, chainName)
 	if err != nil {
 		return err
 	}
-	if chainExists {
-		err = ipt.DeleteChain(tableName, chainName)
-		if err != nil {
-			return err
-		}
+	if !chainExists {
+		logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
+		return nil
 	}
-	logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
+	logger.Log("Removing chain "+chainName, logFilePath, verbose)
+	if err := ipt.DeleteChain(tableName, chainName); err != nil {
+		return err
+	}
+	logger.Log("Removed chain "+chainName, logFilePath, verbose)
 	return nil
 }
 
-func removeDefaultChainIptableRule(chainName string, tableName string, logFilePath string, verbose bool, clear bool) error {
+// removeDefaultChainIptableRule removes the jump from parentChain to chainName.
+func removeDefaultChainIptableRule(chainName string, tableName string, parentChain string, logFilePath string, verbose bool, clear bool) error {
+	if isBuiltinChain(chainName) {
+		return nil
+	}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Removing iptables rule to for default chain "+chainName, logFilePath, verbose)
-	if chainName != "INPUT" {
-		err = ipt.Delete(tableName, "INPUT", "-j", chainName)
-		if err != nil {
-			if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
-				if clear {
-					logger.Log("Chain "+chainName+" does not exist. Already cleared?", logFilePath, verbose)
-				}
-				return nil
+	logger.Log("Removing jump from "+parentChain+" to chain "+chainName, logFilePath, verbose)
+	err = ipt.Delete(tableName, parentChain, "-j", chainName)
+	if err != nil {
+		if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
+			if clear {
+				logger.Log("Jump from "+parentChain+" to "+chainName+" not found. Already cleared?", logFilePath, verbose)
 			}
+			return nil
 		}
-		if err != nil {
-			return err
-		}
-		logger.Log("Removed iptables rule", logFilePath, verbose)
+		return err
 	}
+	logger.Log("Removed iptables rule", logFilePath, verbose)
 	return nil
 }
 
@@ -82,23 +88,52 @@ func createDefaultChain(chainName string, tableName string) error {
 	}
 	return nil
 }
-func addDefaultChainIptableRule(chainName string, tableName string, logFilePath string, verbose bool) error {
+
+// isBuiltinChain reports whether c is a chain that always exists and must never be created or deleted.
+func isBuiltinChain(c string) bool {
+	switch c {
+	case "INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING":
+		return true
+	}
+	return false
+}
+
+// applyRuleDefaults fills in the table, chain, insert position and parent chain of a rule.
+func applyRuleDefaults(r *models.Rule) {
+	if r.Table == "" {
+		r.Table = "raw"
+	}
+	if r.Chain == "" {
+		r.Chain = "IPSET_FW"
+	}
+	if r.Insert < 1 {
+		r.Insert = 1
+	}
+	if r.Parent == "" {
+		if r.Table == "raw" {
+			r.Parent = "PREROUTING"
+		} else {
+			r.Parent = "INPUT"
+		}
+	}
+}
+
+// addDefaultChainIptableRule adds a jump from parentChain to chainName. It does nothing for builtin chains.
+func addDefaultChainIptableRule(chainName string, tableName string, parentChain string, logFilePath string, verbose bool) error {
+	if isBuiltinChain(chainName) {
+		return nil
+	}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
 	}
 
-	logger.Log("Adding iptables rule to for default chain "+chainName, logFilePath, verbose)
-	if chainName != "INPUT" {
-		err = ipt.InsertUnique(tableName, "INPUT", 1, "-j", chainName)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	logger.Log("Adding iptables rule to jump from "+parentChain+" to chain "+chainName, logFilePath, verbose)
+	return ipt.InsertUnique(tableName, parentChain, 1, "-j", chainName)
 }
 
-func addIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool) error {
+// addIptableRule adds the set match rule to rule.Chain in rule.Table.
+func addIptableRule(rule models.Rule, setName string, logFilePath string, verbose bool) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
@@ -112,14 +147,12 @@ func addIptableRule(rule models.Rule, setName string, chainName string, logFileP
 	for _, ruleType := range rule.Type {
 
 		if rule.Not {
-			err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "!", "--match-set", setName, ruleType, "-j", rulePolicy)
+			err = ipt.InsertUnique(rule.Table, rule.Chain, rule.Insert, "-m", "set", "!", "--match-set", setName, ruleType, "-j", rulePolicy)
 		} else {
-			err = ipt.InsertUnique(rule.Table, chainName, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
+			err = ipt.InsertUnique(rule.Table, rule.Chain, rule.Insert, "-m", "set", "--match-set", setName, ruleType, "-j", rulePolicy)
 		}
-		logger.Log("Adding iptables rule to chain "+chainName+" and set "+setName, logFilePath, verbose)
-		// err = ipt.InsertUnique(rule.Table, chainName, rule.Insert)
+		logger.Log("Adding iptables rule to chain "+rule.Chain+" and set "+setName, logFilePath, verbose)
 		if err != nil {
-			fmt.Println(err)
 			return err
 		}
 	}
@@ -127,8 +160,7 @@ func addIptableRule(rule models.Rule, setName string, chainName string, logFileP
 }
 
 func removeIptableRule(rule models.Rule, setName string, chainName string, logFilePath string, verbose bool, clear bool) error {
-	var actions []string
-	actions = []string{"DROP", "ACCEPT"}
+	actions := []string{"DROP", "ACCEPT"}
 	ipt, err := iptables.New()
 	if err != nil {
 		return err
@@ -142,52 +174,30 @@ func removeIptableRule(rule models.Rule, setName string, chainName string, logFi
 
 	for _, ruleType := range rule.Type {
 		for _, terminateAction := range actions {
+			var delErr error
 			if rule.Not {
-				err = ipt.Delete(rule.Table, chainName, "-m", "set", "!", "--match-set", setName, ruleType, "-j", terminateAction)
+				delErr = ipt.Delete(rule.Table, chainName, "-m", "set", "!", "--match-set", setName, ruleType, "-j", terminateAction)
 			} else {
-				err = ipt.Delete(rule.Table, chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
+				delErr = ipt.Delete(rule.Table, chainName, "-m", "set", "--match-set", setName, ruleType, "-j", terminateAction)
 			}
-			if err != nil {
-				if strings.Contains(err.Error(), "does a matching rule exist in that chain") {
-					return nil
-				} else if strings.Contains(err.Error(), "Set "+setName+" doesn't exist") {
-					if clear {
-						logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
-					}
-					return nil
-				}
-				if err != nil {
-					return err
-				}
+			if delErr == nil {
+				continue
 			}
+			// Not found: this action/type was never added (or is already gone). Keep trying the rest.
+			if strings.Contains(delErr.Error(), "does a matching rule exist in that chain") ||
+				strings.Contains(delErr.Error(), "Set "+setName+" doesn't exist") {
+				if clear {
+					logger.Log("Rule not found. Already cleared?", logFilePath, verbose)
+				}
+				continue
+			}
+			return delErr
 		}
 	}
 	logger.Log("Removed iptables rule", logFilePath, verbose)
 	return nil
 }
 
-func convertIPListToRestoreFile(ipList []string, prefixString string, logFilePath string, verbose bool) []string {
-	var convertedIpList []string
-	for _, ip := range ipList {
-		tmpIP, isValid := netutils.IsCIDRValid(ip)
-		if !isValid {
-			continue
-		}
-		ip = tmpIP
-		if verbose {
-			logger.Log("Adding "+ip, logFilePath, verbose)
-		}
-		convertedIpList = append(convertedIpList, prefixString+" "+ip)
-	}
-	return convertedIpList
-}
-
-func includeExtraIPs(ipList []string, extraIPs []string) []string {
-	for _, ip := range extraIPs {
-		ipList = append(ipList, ip)
-	}
-	return ipList
-}
 func parseIPAndCIDR(ip string) (net.IP, uint8) {
 	parsedIP, _, _ := net.ParseCIDR(ip)
 	cidr := strings.Split(string(ip), "/")
@@ -206,6 +216,10 @@ func convertIPToEntry(ip string) ipset.Entry {
 }
 func RollbackSet(setName string) {
 	backupSetName := setName + "-bak"
+	if _, err := ipset.List(backupSetName); err != nil {
+		fmt.Fprintln(os.Stderr, "no backup for "+setName+" yet: a backup is kept from the second update on")
+		os.Exit(1)
+	}
 	err := ipset.Swap(backupSetName, setName)
 	checkerr.Fatal(err)
 	fmt.Println("Successfully rolled back set " + setName + " with backup set " + backupSetName)
@@ -255,196 +269,202 @@ func ListSet(setName string, verbose bool) {
 
 }
 
-func IPsetfw(ipList []string, setModel models.Set, iptables bool, chainName string,
+func IPsetfw(ipList []string, setModel models.Set, iptables bool,
 	rule models.Rule, mattermost file.Mattermost, logFilePath string, verbose bool) error {
-	usermgmt.ExitIfNotRoot()
-	var countryCode string
-	var setName string
-	var notifMsg string
-	var notifyMattermost bool = false
+	setName := setModel.SetName
+	countryCode := setModel.Country
 
-	countryCode = setModel.Country
-	setName = setModel.SetName
-	tmpSetName := setName + "-tmp"
-	backupSetName := setName + "-bak"
-
-	if rule.Table == "" {
-		rule.Table = "raw"
-	}
-	if rule.Chain == "" {
-		rule.Chain = "IPSET_FW"
+	applyRuleDefaults(&rule)
+	if iptables {
+		switch strings.ToLower(rule.Policy) {
+		case "accept", "drop":
+		default:
+			return fmt.Errorf("refusing to update set %s: iptables policy must be accept or drop, got %q", setName, rule.Policy)
+		}
 	}
 
 	hostname, err := os.Hostname()
-	checkerr.Fatal(err)
-	currentTime := time.Now()
-	timeStampFormatted := currentTime.Format("2006-01-02 15:04:05")
-
-	if mattermost.Token != "" && mattermost.URL != "" {
-		notifyMattermost = true
-	}
-
-	var notifMsgInfo string = timeStampFormatted + " HOST: " + hostname + " --- "
-	checkerr.Fatal(err)
-
-	err = createDefaultChain(rule.Chain, rule.Table)
 	if err != nil {
-		notifMsg = notifMsgInfo + "ERROR: Could not create chain " + chainName
-		if notifyMattermost {
-			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
-		}
-		checkerr.Fatal(err)
+		return err
 	}
+	notifyMattermost := mattermost.Token != "" && mattermost.URL != ""
+	notifMsgInfo := time.Now().Format("2006-01-02 15:04:05") + " HOST: " + hostname + " --- "
 
-	// Create a temporary set with new IP pool that we'll swap it with old set later
-	ipset.Create(tmpSetName, ipset.TypeHashNet, ipset.CreateOptions{})
-	ipset.Create(setName, ipset.TypeHashNet, ipset.CreateOptions{})
+	// fail reports the error to Mattermost (best effort) and returns it.
+	fail := func(msg string, err error) error {
+		if notifyMattermost {
+			notify(mattermost, notifMsgInfo+"ERROR: "+msg)
+		}
+		return fmt.Errorf("%s: %w", msg, err)
+	}
 
 	ipListMerged := netutils.MergeIPsToCIDRs(ipList)
-	for _, ip := range ipListMerged {
-		logger.Log("Adding "+ip, logFilePath, verbose)
-		entry := convertIPToEntry(ip)
-		ipset.Add(tmpSetName, &entry)
+	if len(ipListMerged) == 0 {
+		return fail("refusing to update set "+setName, errors.New("no valid networks"))
 	}
 
-	sets, _ := ipset.List(backupSetName)
-	if sets == nil {
-		ipset.Create(backupSetName, ipset.TypeHashNet, ipset.CreateOptions{})
-		for _, ip := range ipListMerged {
-			entry := convertIPToEntry(ip)
-			ipset.Add(backupSetName, &entry)
+	if iptables && !isBuiltinChain(rule.Chain) {
+		if err := createDefaultChain(rule.Chain, rule.Table); err != nil {
+			return fail("could not create chain "+rule.Chain, err)
 		}
-		ipset.Swap(tmpSetName, setName)
-	} else {
-		ipset.Swap(setName, backupSetName)
-		ipset.Swap(tmpSetName, setName)
 	}
-	err = ipset.Destroy(tmpSetName)
-	if err != nil {
-		notifMsg = notifMsgInfo + "ERROR: Could not destroy temporary set " + tmpSetName
-		if notifyMattermost {
-			notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
-		}
-		checkerr.Fatal(err)
+
+	if _, err := replaceSet(setName, "hash:net", netEntries(ipListMerged), nil, 0, logFilePath, verbose); err != nil {
+		return fail("could not update set "+setName, err)
 	}
+
 	if iptables {
-		err := addIptableRule(rule, setName, chainName, logFilePath, verbose)
-		if err != nil {
-			notifMsg = notifMsgInfo + "ERROR: Could not add rule for set: " + setName + " - chain: " + chainName
-			if notifyMattermost {
-				notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
-			}
-			checkerr.Fatal(err)
+		if err := addDefaultChainIptableRule(rule.Chain, rule.Table, rule.Parent, logFilePath, verbose); err != nil {
+			return fail("could not add jump from "+rule.Parent+" to chain "+rule.Chain, err)
+		}
+		if err := addIptableRule(rule, setName, logFilePath, verbose); err != nil {
+			return fail("could not add iptables rule for set "+setName+" - chain "+rule.Chain, err)
 		}
 	}
 
-	currentTime = time.Now()
-	timeStampFormatted = currentTime.Format("2006-01-02 15:04:05")
-
-	notifMsg = notifMsgInfo + "Successfully created set " + setName + " for country " +
-		countryCode + " with " + strconv.Itoa(len(ipList)) + " number of entries!"
-
-	fmt.Printf(notifMsg + "\n")
-	notif.SendNotificationMattermost(notifMsg, mattermost.URL, mattermost.Token)
+	msg := notifMsgInfo + "Successfully created set " + setName + " for country " +
+		countryCode + " with " + strconv.Itoa(len(ipListMerged)) + " number of entries!"
+	fmt.Println(msg)
+	notify(mattermost, msg)
 	return nil
 }
 
-func LoopConfigFile(path string, iptables bool, verbose bool) {
+// notify sends a Mattermost message on a best-effort basis; failures are only printed.
+func notify(m file.Mattermost, msg string) {
+	if err := notif.SendNotificationMattermost(msg, m.URL, m.Token); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: "+err.Error())
+	}
+}
+
+// fetchRuleList returns the combined networks for one config rule, from its files or from GitHub.
+func fetchRuleList(r file.Rule, verbose bool, logFilePath string) ([]string, error) {
+	if len(r.Path) == 0 {
+		return netutils.FetchIPPool(r.Country, verbose, "", logFilePath)
+	}
+	var ipList []string
+	for _, path := range r.Path {
+		fetched, err := netutils.FetchIPPool(r.Country, verbose, path, logFilePath)
+		if err != nil {
+			return nil, err
+		}
+		ipList = append(ipList, fetched...)
+	}
+	return ipList, nil
+}
+
+// LoopConfigFile applies every rule in the config. A failing rule is reported and skipped;
+// the others still run. An error is returned at the end if any rule failed.
+func LoopConfigFile(path string, iptables bool, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
-	var ipListConcatenated []string
-	var ipList []string
-	var set models.Set
-	var rule models.Rule
+	if err := inventory.Validate(); err != nil {
+		return err
+	}
+	if newFormat(inventory) {
+		return applyBlockAllow(path, inventory, verbose)
+	}
+	if err := configureSources(inventory, false); err != nil {
+		return err
+	}
+	logFilePath := inventory.LogFilePath
 	var mattermost file.Mattermost
-	var logFilePath string = inventory.LogFilePath
 	if inventory.Mattermost.Token != "" && inventory.Mattermost.URL != "" {
 		mattermost = inventory.Mattermost
 	}
 
+	var failedSets []string
 	for _, r := range inventory.IPSetRules {
-		set = models.Set{
+		set := models.Set{
 			Country: r.Country,
 			SetName: r.SetName,
 		}
-		rule = models.Rule{
+		rule := models.Rule{
 			Policy: r.IPtables.Policy,
 			Insert: r.IPtables.Insert,
 			Type:   r.IPtables.Type,
 			Chain:  r.IPtables.Chain,
+			Parent: r.IPtables.Parent,
 			Table:  r.IPtables.Table,
 			Not:    r.IPtables.Not,
 		}
-		if r.IPtables.Policy != "" {
-			iptables = true
+		// iptables rules are only added for rules that have a policy.
+		useIptables := r.IPtables.Policy != ""
+
+		ipList, err := fetchRuleList(r, verbose, logFilePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
+			failedSets = append(failedSets, set.SetName)
+			continue
 		}
-		if len(r.Path) != 0 {
-			for _, path := range r.Path {
-				ipList = netutils.FetchIPPool(*&set.Country, verbose, path, logFilePath)
-				ipList = includeExtraIPs(ipList, r.ExtraIPs)
-				ipListConcatenated = append(ipListConcatenated, ipList...)
-			}
-			IPsetfw(ipListConcatenated, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose)
-		} else {
-			ipList := netutils.FetchIPPool(*&set.Country, verbose, "", logFilePath)
-			ipList = includeExtraIPs(ipList, r.ExtraIPs)
-			IPsetfw(ipList, set, iptables, r.IPtables.Chain, rule, mattermost, logFilePath, verbose)
+		ipList = append(ipList, r.ExtraIPs...)
+
+		if err := IPsetfw(ipList, set, useIptables, rule, mattermost, logFilePath, verbose); err != nil {
+			fmt.Fprintln(os.Stderr, "set "+set.SetName+" not updated: "+err.Error())
+			failedSets = append(failedSets, set.SetName)
 		}
 	}
+	if len(failedSets) > 0 {
+		return fmt.Errorf("%d set(s) not updated: %s", len(failedSets), strings.Join(failedSets, ", "))
+	}
+	return nil
 }
 
 func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
-	var rule models.Rule
+	if newFormat(inventory) {
+		return clearBlockAllow(path, inventory, verbose)
+	}
+
+	// Each distinct (table, chain, parent) jump is removed once, after all sets are gone.
+	type jumpKey struct{ table, chain, parent string }
+	seen := map[jumpKey]bool{}
+	var jumps []jumpKey
+
 	for _, r := range inventory.IPSetRules {
 		setName := r.SetName
-		rule = models.Rule{
+		rule := models.Rule{
 			Policy: r.IPtables.Policy,
 			Insert: r.IPtables.Insert,
 			Type:   r.IPtables.Type,
+			Chain:  r.IPtables.Chain,
+			Table:  r.IPtables.Table,
+			Not:    r.IPtables.Not,
+			Parent: r.IPtables.Parent,
 		}
-		if r.IPtables.Policy != "" {
-			iptables = true
-		}
-		if rule.Table == "" {
-			rule.Table = "raw"
-		}
-		if rule.Chain == "" {
-			rule.Chain = "IPSET_FW"
-		}
+		applyRuleDefaults(&rule)
 
-		err := createDefaultChain(rule.Chain, rule.Table)
-		if err != nil {
-			return err
-		}
-		if iptables {
-			err := removeIptableRule(rule, setName, rule.Chain, "", verbose, true)
-			if err != nil {
+		useIptables := iptables || r.IPtables.Policy != ""
+		if useIptables {
+			if err := removeIptableRule(rule, setName, rule.Chain, "", verbose, true); err != nil {
 				return err
 			}
 			time.Sleep(100 * time.Millisecond)
-		}
-		// Destroy set if it exists
-		err = ipset.Destroy(setName)
-		err = ipset.Destroy(setName + "-bak")
-		if err != nil {
-			if !strings.Contains(err.Error(), "The set with the given name does not exist") {
-				if err != nil {
-					return err
-				}
+			k := jumpKey{rule.Table, rule.Chain, rule.Parent}
+			if !seen[k] {
+				seen[k] = true
+				jumps = append(jumps, k)
 			}
 		}
+
+		// Destroy the set and its backup. Only "does not exist" is ignored.
+		if err := ipset.Destroy(setName); err != nil && !errors.Is(err, syscall.ENOENT) {
+			return err
+		}
+		if err := ipset.Destroy(setName + "-bak"); err != nil && !errors.Is(err, syscall.ENOENT) {
+			return err
+		}
 	}
-	err := removeDefaultChainIptableRule(rule.Chain, rule.Table, "", verbose, true)
-	if err != nil {
-		return err
-	}
-	err = removeDefaultChain(rule.Chain, rule.Table, "", verbose)
-	if err != nil {
-		return err
+
+	for _, k := range jumps {
+		if err := removeDefaultChainIptableRule(k.chain, k.table, k.parent, "", verbose, true); err != nil {
+			return err
+		}
+		if err := removeDefaultChain(k.chain, k.table, "", verbose); err != nil {
+			return err
+		}
 	}
 	return nil
 }
