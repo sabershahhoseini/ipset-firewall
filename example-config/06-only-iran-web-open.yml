@@ -1,0 +1,8 @@
+# Only Iran may connect, except the website, which stays open to everyone.
+only:
+  - ir
+allow:
+  - 203.0.113.42                # admin
+  - name: web-public
+    ips: [0.0.0.0/0]
+    ports: [80, 443]

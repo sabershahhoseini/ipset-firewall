@@ -1,0 +1,9 @@
+# No internet on this host: lists come from a local mirror directory.
+# Put ir.txt and tor.txt there (one network per line), copied from a connected machine.
+mirror: /srv/ipsetfw/mirror
+offline: true
+cache:
+  dir: "off"
+block:
+  - ir
+  - tor

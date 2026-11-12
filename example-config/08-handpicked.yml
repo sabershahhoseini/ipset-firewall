@@ -1,0 +1,7 @@
+# No country lists at all: block single addresses and a list file.
+block:
+  - 192.0.2.7
+  - 192.0.2.99
+  - name: abuse
+    file: [/etc/ipsetfw/abuse.txt]
+    ips: [198.51.100.0/24]

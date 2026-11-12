@@ -1,0 +1,5 @@
+# Block traffic from a few countries and Tor exit nodes.
+block:
+  - ir
+  - ru
+  - tor
