@@ -6,38 +6,36 @@ logFile: "./log.txt"
 #  token: "MATTERMOST_TOKEN"
 
 # A list of rules containing country name to block and set name for ipset.
-# If iptables variable is defined, iptable rules will be created too.
+# Every IP in a set is added to the block set. extraIPs are added to the set too,
+# so only list addresses here that you want blocked.
+# If iptables is defined, iptable rules are created too. Without a policy no rule is added.
 rules:
+  # Drop packets whose source is in Iran.
   - country: "ir"
     set: "ir-block"
-    extraIPs:
-      - "10.0.0.0/8"
-      - "192.168.1.0/24"
     iptables:
       policy: "drop"
       insert: 1
       type:
-        - "dst"
+        - "src"
       chain: "IPSET_FW"
       table: "raw"
-      # If source IP was NOT from Iran, drop it
-      not: true
 
   - country: tor
     set: tor-block
     iptables:
       policy: drop
       insert: 2
+      type:
+        - "src"
 
-  # file is a list of files of network pools
-  - file:
-    - /tmp/US-list.txt
-    - /tmp/DE-list.txt
-
-    # When file is defined, country only is only used for logs
-    country: us
-    set: us-block
-    iptables:
-      policy: accept
-      insert: 3
-      # If you don't define any chain, default chain will be used
+  # Example only: file is a list of network files to combine into one set.
+  # Uncomment and point these at real files before use.
+  #- file:
+  #  - /etc/ipsetfw/US-list.txt
+  #  - /etc/ipsetfw/DE-list.txt
+  #  country: us
+  #  set: us-block
+  #  iptables:
+  #    policy: accept
+  #    insert: 3
