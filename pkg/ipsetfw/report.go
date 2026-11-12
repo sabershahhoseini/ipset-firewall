@@ -98,6 +98,12 @@ func (r *runReport) finish(err error) {
 	if err != nil {
 		r.Result = "failed"
 		r.Errors = append(r.Errors, err.Error())
+		// Each failed list's own reason, so hooks and the report say why it failed.
+		for _, l := range r.Lists {
+			if l.Status == "failed" && l.Error != "" {
+				r.Errors = append(r.Errors, l.Kind+" "+l.Name+": "+l.Error)
+			}
+		}
 	}
 	r.Changed = r.AllowOnlyChanged || len(r.StaleRemoved) > 0 || len(r.RolledBack) > 0 || r.Action == "clear"
 	for _, l := range r.Lists {

@@ -327,6 +327,7 @@ func applyBlockAllow(path string, inv file.Inventory, verbose bool) error {
 	hooks := newHookRunner(inv)
 	if err := hooks.runBefore(rep); err != nil {
 		rep.finish(err)
+		hooks.onError(rep)
 		if serr := rep.save(reportPath(inv)); serr != nil {
 			fmt.Fprintln(os.Stderr, "warning: could not save report: "+serr.Error())
 		}
@@ -342,6 +343,7 @@ func applyBlockAllow(path string, inv file.Inventory, verbose bool) error {
 	}
 	rep.finish(runErr)
 	runErr = hooks.afterRun(inv, rep, runErr)
+	hooks.onError(rep)
 	fmt.Println(msgPrefix() + "Summary: " + rep.summary())
 	logger.Log("Summary: "+rep.summary(), inv.LogFilePath, false)
 	if err := rep.save(reportPath(inv)); err != nil {
@@ -462,11 +464,15 @@ func clearBlockAllow(path string, inv file.Inventory, verbose bool) error {
 	rep := newReport("clear", path)
 	hooks := newHookRunner(inv)
 	if err := hooks.runBefore(rep); err != nil {
+		rep.finish(err)
+		hooks.onError(rep)
 		return err
 	}
 	runErr := clearBlockAllowRun(inv, verbose)
 	rep.finish(runErr)
-	return hooks.afterRun(inv, rep, runErr)
+	runErr = hooks.afterRun(inv, rep, runErr)
+	hooks.onError(rep)
+	return runErr
 }
 
 // clearBlockAllowRun does the work of clearBlockAllow.

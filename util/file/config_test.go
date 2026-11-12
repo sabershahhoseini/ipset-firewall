@@ -201,12 +201,15 @@ func TestHooksValidation(t *testing.T) {
 		wantErr string
 	}{
 		{"good", "hooks:\n  timeout: 20s\n  before:\n    - run: [/usr/local/bin/a, --x]\n      onFailure: warn\n  after:\n    - run: [/b]\n      when: changed\n      onFailure: rollback\n      timeout: 5s\nblock: [ir]\n", ""},
-		{"onError not yet", "hooks:\n  onError:\n    - run: [/c]\nblock: [ir]\n", "onError is not supported yet"},
+		{"onError run", "hooks:\n  onError:\n    - run: [/c]\nblock: [ir]\n", ""},
+		{"webhooks", "hooks:\n  after:\n    - webhook: https://hooks.example.com/a/SECRET\n      retries: 3\n      timeout: 5s\n      when: changed\n  onError:\n    - webhook: http://127.0.0.1:8080/x\nblock: [ir]\n", ""},
+		{"webhook ftp", "hooks:\n  after:\n    - webhook: ftp://x/SECRET\nblock: [ir]\n", "http:// or https://"},
+		{"webhook no host", "hooks:\n  after:\n    - webhook: https:///SECRET\nblock: [ir]\n", "http:// or https://"},
+		{"webhook garbage", "hooks:\n  after:\n    - webhook: SECRET-TOKEN\nblock: [ir]\n", "http:// or https://"},
 		{"defaults only", "hooks:\n  after:\n    - run: [/b]\nblock: [ir]\n", ""},
 		{"relative path", "hooks:\n  before:\n    - run: [a.sh]\nblock: [ir]\n", "absolute path"},
 		{"neither run nor webhook", "hooks:\n  before:\n    - when: changed\nblock: [ir]\n", "set run"},
 		{"both", "hooks:\n  after:\n    - run: [/a]\n      webhook: http://x\nblock: [ir]\n", "not both"},
-		{"webhook not yet", "hooks:\n  after:\n    - webhook: http://x\nblock: [ir]\n", "not supported yet"},
 		{"before with when", "hooks:\n  before:\n    - run: [/a]\n      when: changed\nblock: [ir]\n", "only for after"},
 		{"before rollback", "hooks:\n  before:\n    - run: [/a]\n      onFailure: rollback\nblock: [ir]\n", "abort or warn"},
 		{"after abort", "hooks:\n  after:\n    - run: [/a]\n      onFailure: abort\nblock: [ir]\n", "warn or rollback"},
@@ -248,5 +251,23 @@ func TestHookDefaults(t *testing.T) {
 	}
 	if h.Before[0].OnFailureOrDefault("before") != "abort" || h.After[0].OnFailureOrDefault("after") != "warn" {
 		t.Error("default failure policies wrong")
+	}
+}
+
+func TestWebhookErrorsAndLabelsNeverShowTheURL(t *testing.T) {
+	for _, doc := range []string{
+		"hooks:\n  after:\n    - webhook: ftp://host/SECRET-TOKEN\nblock: [ir]\n",
+		"hooks:\n  after:\n    - webhook: SECRET-TOKEN\nblock: [ir]\n",
+	} {
+		if err := parse(t, doc).Validate(); err == nil || strings.Contains(err.Error(), "SECRET") {
+			t.Errorf("error = %v (must fail and not contain the URL)", err)
+		}
+	}
+	h := Hook{Webhook: "https://user:pw@hooks.example.com:8443/services/T0/B0/SECRET-TOKEN?token=SECRET2"}
+	if got := h.Name(); got != "webhook https://hooks.example.com" {
+		t.Errorf("Name = %q", got)
+	}
+	if WebhookLabel("garbage") != "webhook" {
+		t.Errorf("label for garbage = %q", WebhookLabel("garbage"))
 	}
 }

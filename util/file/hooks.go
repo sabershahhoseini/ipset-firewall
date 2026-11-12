@@ -2,9 +2,20 @@ package file
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"time"
 )
+
+// WebhookLabel is how a webhook is shown in messages: scheme and host only. The path and query
+// of a webhook URL often hold a secret token, so they are never printed.
+func WebhookLabel(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "webhook"
+	}
+	return "webhook " + u.Scheme + "://" + u.Hostname()
+}
 
 // DefaultHookTimeout is how long a hook may run when no timeout is set.
 const DefaultHookTimeout = 30 * time.Second
@@ -64,12 +75,12 @@ func (hk Hook) OnFailureOrDefault(event string) string {
 	return "warn"
 }
 
-// Name is a short label for messages: the program, or a webhook marker (never the URL).
+// Name is a short label for messages: the program, or the webhook's scheme and host (never its URL).
 func (hk Hook) Name() string {
 	if len(hk.Run) > 0 {
 		return hk.Run[0]
 	}
-	return "webhook"
+	return WebhookLabel(hk.Webhook)
 }
 
 // validate checks the hooks of one event.
@@ -83,10 +94,15 @@ func (h HooksConfig) validateEvent(event string, hooks []Hook) error {
 		case !hasRun && !hasWebhook:
 			return fmt.Errorf("%s: set run (a program) or webhook", where)
 		case hasWebhook:
-			return fmt.Errorf("%s: webhook is not supported yet", where)
-		}
-		if !filepath.IsAbs(hk.Run[0]) {
-			return fmt.Errorf("%s: run[0] must be an absolute path, got %q", where, hk.Run[0])
+			// The URL itself is never put in an error: it may contain a token.
+			u, err := url.Parse(hk.Webhook)
+			if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+				return fmt.Errorf("%s: webhook must be an http:// or https:// URL", where)
+			}
+		default:
+			if !filepath.IsAbs(hk.Run[0]) {
+				return fmt.Errorf("%s: run[0] must be an absolute path, got %q", where, hk.Run[0])
+			}
 		}
 		switch event {
 		case "before":
@@ -136,11 +152,5 @@ func (h HooksConfig) Validate() error {
 	if err := h.validateEvent("after", h.After); err != nil {
 		return err
 	}
-	if err := h.validateEvent("onError", h.OnError); err != nil {
-		return err
-	}
-	if len(h.OnError) > 0 {
-		return fmt.Errorf("hooks.onError is not supported yet")
-	}
-	return nil
+	return h.validateEvent("onError", h.OnError)
 }

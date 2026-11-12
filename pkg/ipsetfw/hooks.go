@@ -152,7 +152,8 @@ func (r hookRunner) runProgram(label string, hk file.Hook, env []string) error {
 
 // runEvent runs the hooks of an event in order and returns the ones that failed. After hooks
 // with when: changed are skipped when nothing changed. stop is asked after each failure and
-// ends the event when it returns true.
+// ends the event when it returns true. Program hooks get the report as a private file;
+// webhooks get it as the request body.
 func (r hookRunner) runEvent(event string, hooks []file.Hook, rep *runReport, stop func(hookFailure) bool) []hookFailure {
 	var failures []hookFailure
 	var reportFile string
@@ -160,18 +161,26 @@ func (r hookRunner) runEvent(event string, hooks []file.Hook, rep *runReport, st
 		if event == "after" && hk.When == "changed" && !rep.Changed {
 			continue
 		}
-		if reportFile == "" {
-			f, err := writeHookReport(r.reportDir, rep)
-			if err != nil {
-				failures = append(failures, hookFailure{hook: hk, index: i + 1, err: fmt.Errorf("could not write the report for hooks: %w", err)})
-				return failures
-			}
-			reportFile = f
-			defer os.Remove(f)
-		}
 		label := fmt.Sprintf("%s %d", event, i+1)
 		started := time.Now()
-		err := r.runProgram(label, hk, hookEnv(event, rep, reportFile))
+		var err error
+		if hk.Webhook != "" {
+			var body []byte
+			if body, err = json.MarshalIndent(rep, "", "  "); err == nil {
+				err = postReport(hk.Webhook, body, r.cfg.TimeoutFor(hk), hk.Retries)
+			}
+		} else {
+			if reportFile == "" {
+				f, werr := writeHookReport(r.reportDir, rep)
+				if werr != nil {
+					failures = append(failures, hookFailure{hook: hk, index: i + 1, err: fmt.Errorf("could not write the report for hooks: %w", werr)})
+					return failures
+				}
+				reportFile = f
+				defer os.Remove(f)
+			}
+			err = r.runProgram(label, hk, hookEnv(event, rep, reportFile))
+		}
 		took := time.Since(started).Round(time.Millisecond)
 		if err != nil {
 			fmt.Printf("Hook %s (%s): FAILED after %s: %v\n", label, hk.Name(), took, err)
@@ -289,6 +298,19 @@ func (r hookRunner) afterRun(inv file.Inventory, rep *runReport, runErr error) e
 	return runErr
 }
 
+// onError runs the onError hooks of a failed run. Their failures are only warnings: the run has
+// already failed, and the exit code says so.
+func (r hookRunner) onError(rep *runReport) {
+	if rep.Result == "ok" || len(r.cfg.OnError) == 0 {
+		return
+	}
+	for _, f := range r.runEvent("onError", r.cfg.OnError, rep, nil) {
+		msg := fmt.Sprintf("onError hook %d (%s) failed: %v", f.index, f.hook.Name(), f.err)
+		rep.HookFailures = append(rep.HookFailures, msg)
+		fmt.Fprintln(os.Stderr, "warning: "+msg)
+	}
+}
+
 // sampleReport is a made-up report for -test-hook.
 func sampleReport(config, event string) *runReport {
 	rep := newReport("apply", config)
@@ -332,6 +354,12 @@ func TestHooks(path, event string, verbose bool) error {
 		fmt.Printf("no %s hooks configured\n", event)
 		return nil
 	}
+	for _, hk := range hooks {
+		if hk.Webhook != "" {
+			fmt.Println("note: webhooks send the sample report to the real URL")
+			break
+		}
+	}
 	failures := r.runEvent(event, hooks, sampleReport(path, event), nil)
 	for _, f := range failures {
 		if f.hook.OnFailureOrDefault(event) == "rollback" {
@@ -368,6 +396,9 @@ func describeHooks(inv file.Inventory) int {
 			opts = append(opts, "on failure: "+hk.OnFailureOrDefault(event))
 			opts = append(opts, "timeout "+h.TimeoutFor(hk).String())
 			fmt.Printf("  %-8s %s (%s)\n", event, hk.Name(), strings.Join(opts, ", "))
+			if hk.Webhook != "" {
+				continue
+			}
 			if err := checkHookFile(hk.Run[0]); err != nil {
 				fmt.Printf("          PROBLEM: %v; apply would refuse to run it\n", err)
 				problems++

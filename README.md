@@ -268,6 +268,10 @@ hooks:
 * A failing after hook makes the run exit 1, but the change is kept unless it rolled back.
 * **`ipsetfw -config x.yml -test-hook after`** runs the hooks of an event against a sample report and changes nothing. `-plan` lists the hooks.
 * Hooks run for apply and `-clear` only, never for `-plan`, `-status`, `-verify` or `-restore`.
+* **`webhook: https://...`** on any hook POSTs the run report as JSON (`Content-Type: application/json`, `User-Agent: ipsetfw`). A 2xx answer is success. `retries: N` retries after a failure, waiting 1s, 2s, 4s and so on (at most 30s). `timeout` limits each attempt.
+* Messages and logs show only `webhook https://host`, never the path or query, because they often hold a token.
+* **`onError`** hooks run when a run failed, after a rollback, or when a before hook aborted the run. They get `IPSETFW_RESULT=failed` and the errors, including each failed list's reason. A failing onError hook only prints a warning; it never changes the exit code.
+* `-test-hook` with a webhook sends the sample report to the real URL.
 
 Examples are in `contrib/hooks/`: `health-check.sh` (roll back if your site stops answering) and `save-to-file.sh` (keep every run's report).
 

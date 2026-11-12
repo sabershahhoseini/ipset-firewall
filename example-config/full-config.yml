@@ -50,6 +50,11 @@ offline: false                          # true = never use the network (mirror a
 #    - run: [/etc/ipsetfw/hooks/health-check.sh, http://127.0.0.1/health]
 #      when: changed                     # only when a list changed
 #      onFailure: rollback               # restore the previous lists if this fails
+#    - webhook: https://hooks.example.com/ipsetfw   # POSTs the run report as JSON
+#      when: changed
+#      retries: 3
+#  onError:
+#    - webhook: https://alerts.example.com/ipsetfw  # when a run fails
 
 # Never blocked. Accepted before any block rule, as source and destination.
 allow:
