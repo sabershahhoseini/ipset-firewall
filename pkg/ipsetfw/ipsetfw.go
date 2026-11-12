@@ -425,6 +425,12 @@ func LoopConfigFile(path string, iptables bool, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
+	if err := inventory.Validate(); err != nil {
+		return err
+	}
+	if newFormat(inventory) {
+		return applyBlockAllow(inventory, verbose)
+	}
 	logFilePath := inventory.LogFilePath
 	var mattermost file.Mattermost
 	if inventory.Mattermost.Token != "" && inventory.Mattermost.URL != "" {
@@ -472,6 +478,9 @@ func LoopConfigFileClear(path string, iptables bool, verbose bool) error {
 	usermgmt.ExitIfNotRoot()
 	configString := file.ReadConfigFile(path)
 	inventory := file.DecodeConfig(configString)
+	if newFormat(inventory) {
+		return clearBlockAllow(inventory, verbose)
+	}
 
 	// Each distinct (table, chain, parent) jump is removed once, after all sets are gone.
 	type jumpKey struct{ table, chain, parent string }

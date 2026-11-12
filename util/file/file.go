@@ -28,9 +28,11 @@ type Mattermost struct {
 
 // Inventory of all routes in yaml config
 type Inventory struct {
-	IPSetRules  []Rule     `yaml:"rules"`
-	Mattermost  Mattermost `yaml:"mattermost"`
-	LogFilePath string     `yaml:"logFile"`
+	IPSetRules  []Rule       `yaml:"rules"`
+	Allow       []string     `yaml:"allow"`
+	Block       []BlockEntry `yaml:"block"`
+	Mattermost  Mattermost   `yaml:"mattermost"`
+	LogFilePath string       `yaml:"logFile"`
 }
 
 func ReadConfigFile(path string) string {

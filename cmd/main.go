@@ -29,6 +29,7 @@ func main() {
 	rollback := flag.Bool("rollback", false, "rollback set with previous backup set")
 	list := flag.Bool("list", false, "List sets")
 	config := flag.String("config", "", "Use yaml config file")
+	plan := flag.Bool("plan", false, "With -config: show what would be applied, change nothing")
 	help := flag.Bool("help", false, "Show help")
 	flag.Parse()
 
@@ -40,6 +41,7 @@ Options:
 	-help					show this menu
 
 	-config		{PATH}			Read config from yaml file
+	-plan					with -config: show what would be applied, change nothing
 	-country	{CODE}			set country code. is not case sensitive.
 	-set		{NAME}			name of ipset set
 	-check		{IP}			check if IP exists in specific country IP pool
@@ -115,6 +117,8 @@ Check if IP exists in IR (Iran):
 		ipList, err := netutils.FetchIPPool(*countryCode, *verbose, "", "")
 		checkerr.Fatal(err)
 		file.ExportToFile(*filePath, ipList, *verbose)
+	} else if *config != "" && *plan {
+		checkerr.Fatal(ipsetfw.PlanConfig(*config, *verbose))
 	} else if *config != "" && !*clear {
 		checkerr.Fatal(ipsetfw.LoopConfigFile(*config, *iptables, *verbose))
 	} else if *list && *setName != "" {

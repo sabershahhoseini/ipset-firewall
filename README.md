@@ -89,6 +89,36 @@ If you want to clear everything setup by config file, just run:
 ipsetfw -config ipsetfw.yml -clear -v
 ```
 
+### Simple config (block / allow)
+
+```yaml
+logFile: "/var/log/ipsetfw.log"
+
+# Always inserted first, for source and destination. Nothing in a block list
+# can match these.
+allow:
+  - 10.0.0.0/8
+  - 203.0.113.42                # my admin IP
+
+# Block lists. A bare country code is a list fetched from the sources.
+# A map adds a file, addresses, or a direction. Sets are named <name>-block.
+block:
+  - ir                          # set ir-block, source drop
+  - tor                         # set tor-block, source drop
+  - name: scanners
+    file: [/etc/ipsetfw/scanners.txt]
+    ips: [192.0.2.0/24]
+    direction: dst              # default src
+```
+
+* `allow` addresses are accepted as source and as destination, ahead of every block rule.
+* `ipsetfw -config x.yml -plan` shows what would be applied and changes nothing.
+* `-clear` removes the sets, rules, jump and the `IPSET_FW` chain for this format.
+* Removing an entry from `block` removes its drop rule on the next run. The set is kept, and the run prints the `ipset destroy` command to remove it.
+* The `-iptables` flag is ignored for this format, because every block entry has a drop rule.
+* Invalid configs are refused before anything changes.
+* The older `rules:` format still works, but it can't be mixed with `block` or `allow`.
+
 ### Notes
 
 * Country lists come from [ipverse/country-ip-blocks](https://github.com/ipverse/country-ip-blocks) (CC0, updated daily) and fall back to [ipdeny.com](https://www.ipdeny.com/ipblocks/). Tor exit nodes come from the [Tor Project bulk exit list](https://check.torproject.org/torbulkexitlist) and fall back to [SecOps-Institute/Tor-IP-Addresses](https://github.com/SecOps-Institute/Tor-IP-Addresses). Sources are tried in order, and an empty result counts as a failure.
